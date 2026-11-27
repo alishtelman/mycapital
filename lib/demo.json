@@ -1,0 +1,333 @@
+{
+  "accounts": [
+    {
+      "id": "cash",
+      "name": "Свободные деньги",
+      "kind": "cash",
+      "owner": "Я",
+      "opening": 28640000,
+      "rate": 0,
+      "basis": 0,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 0,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "reserve",
+      "name": "Финансовая подушка",
+      "kind": "reserve",
+      "owner": "Я",
+      "opening": 84000000,
+      "rate": 0,
+      "basis": 0,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 0,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "ot",
+      "name": "Мой Отбасы",
+      "kind": "otbasy",
+      "owner": "Я",
+      "opening": 354000000,
+      "rate": 2,
+      "basis": 0,
+      "maturity": "",
+      "contract": 420000000,
+      "futureContract": 2200000000,
+      "score": 5.2,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "ot2",
+      "name": "Семейный Отбасы",
+      "kind": "otbasy",
+      "owner": "Семья",
+      "opening": 46000000,
+      "rate": 2,
+      "basis": 0,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 2200000000,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "bcc",
+      "name": "Накопительный вклад",
+      "kind": "bcc",
+      "owner": "Я",
+      "opening": 132000000,
+      "rate": 13.1,
+      "basis": 0,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 0,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "gold",
+      "name": "Золото",
+      "kind": "market",
+      "owner": "Я",
+      "opening": 63500000,
+      "rate": 0,
+      "basis": 57000000,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 0,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    },
+    {
+      "id": "stocks",
+      "name": "Инвестиции",
+      "kind": "market",
+      "owner": "Я",
+      "opening": 89500000,
+      "rate": 0,
+      "basis": 79000000,
+      "maturity": "",
+      "contract": 0,
+      "futureContract": 0,
+      "score": 0,
+      "interest": 0,
+      "eligible": 0,
+      "awarded": 0,
+      "fee": 0,
+      "earlyRate": 0,
+      "opened": "",
+      "rollover": false
+    }
+  ],
+  "rules": [
+    {
+      "id": "salary",
+      "name": "Зарплата",
+      "kind": "income",
+      "amount": 61000000,
+      "date": "2026-12-01",
+      "repeat": "monthly",
+      "active": true
+    },
+    {
+      "id": "advance",
+      "name": "Аванс",
+      "kind": "income",
+      "amount": 29500000,
+      "date": "2026-12-16",
+      "repeat": "monthly",
+      "active": true
+    },
+    {
+      "id": "quarter",
+      "name": "Премия",
+      "kind": "income",
+      "amount": 59500000,
+      "date": "2027-01-20",
+      "repeat": "quarterly",
+      "active": true
+    },
+    {
+      "id": "utilities",
+      "name": "Коммунальные услуги",
+      "kind": "expense",
+      "amount": 3200000,
+      "date": "2026-12-07",
+      "repeat": "monthly",
+      "active": true
+    },
+    {
+      "id": "rent",
+      "name": "Аренда",
+      "kind": "expense",
+      "amount": 15600000,
+      "date": "2026-12-05",
+      "repeat": "monthly",
+      "active": true
+    }
+  ],
+  "categories": [
+    {
+      "id": "food",
+      "name": "Продукты и дом",
+      "budget": 14500000,
+      "minimum": 11500000,
+      "maximum": 14500000,
+      "rank": 0,
+      "flexible": true
+    },
+    {
+      "id": "family",
+      "name": "Семейный досуг",
+      "budget": 6500000,
+      "minimum": 3500000,
+      "maximum": 6500000,
+      "rank": 0,
+      "flexible": true
+    },
+    {
+      "id": "misc",
+      "name": "Непредвиденные расходы",
+      "budget": 5200000,
+      "minimum": 2500000,
+      "maximum": 5200000,
+      "rank": 0,
+      "flexible": true
+    }
+  ],
+  "purchases": [
+    {
+      "id": "trip",
+      "name": "Семейная поездка",
+      "amount": 11600000,
+      "minimum": 9500000,
+      "maximum": 13200000,
+      "date": "2026-12-19",
+      "rank": 2,
+      "required": false,
+      "movable": true,
+      "staged": true,
+      "category": "",
+      "status": "planned",
+      "comment": "Поездка на выходные."
+    }
+  ],
+  "debts": [
+    {
+      "id": "installment",
+      "name": "Ноутбук",
+      "kind": "installment",
+      "balance": 32000000,
+      "original": 32000000,
+      "payment": 4000000,
+      "rate": 0,
+      "apr": 0,
+      "date": "2026-12-09",
+      "confirmed": true
+    }
+  ],
+  "goals": [
+    {
+      "id": "home",
+      "name": "Покупка инвестиционной квартиры",
+      "price": 2200000000,
+      "down": 50,
+      "reserve": 140000000,
+      "date": "2027-10-31",
+      "latest": "2027-12-31",
+      "score": 5,
+      "buffer": 0.2,
+      "laterScore": 16,
+      "rentMin": 14500000,
+      "rentMax": 17500000,
+      "rate": 9,
+      "laterRate": 5.5,
+      "completed": false
+    }
+  ],
+  "transactions": [],
+  "events": [],
+  "scenarios": [
+    {
+      "id": "base",
+      "name": "Базовый",
+      "income": 100,
+      "expenses": 100,
+      "rates": 100,
+      "market": 100,
+      "price": 100,
+      "bonusDelay": 0,
+      "otbasyShare": 5
+    },
+    {
+      "id": "safe",
+      "name": "Консервативный",
+      "income": 85,
+      "expenses": 115,
+      "rates": 85,
+      "market": 90,
+      "price": 110,
+      "bonusDelay": 20,
+      "otbasyShare": 38
+    },
+    {
+      "id": "yield",
+      "name": "Максимальная доходность",
+      "income": 108,
+      "expenses": 100,
+      "rates": 100,
+      "market": 100,
+      "price": 100,
+      "bonusDelay": 0,
+      "otbasyShare": 0
+    },
+    {
+      "id": "custom",
+      "name": "Пользовательский",
+      "income": 100,
+      "expenses": 100,
+      "rates": 100,
+      "market": 100,
+      "price": 100,
+      "bonusDelay": 0,
+      "otbasyShare": 20
+    }
+  ],
+  "plans": [],
+  "bonuses": [],
+  "settings": {
+    "mrp": {},
+    "priority": [
+      "bills",
+      "living",
+      "purchases",
+      "reserve",
+      "otbasy",
+      "bcc",
+      "debt",
+      "free"
+    ]
+  }
+}

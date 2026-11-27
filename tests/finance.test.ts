@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
+import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
+
+const sample=():Data=>JSON.parse(readFileSync(new URL('../lib/demo.json',import.meta.url),'utf8'));
+const date='2026-11-27';
+const create=(extra:Partial<Entry>):Entry=>({id:'new',name:'Тестовая операция',date:today(),kind:'expense',amount:100,from:'cash',to:'',event:'',category:'',reservation:'',sold:0,...extra});
+const dec=(d:Data)=>calendar(d,'2026-12-01','2026-12-31');
+
+test('зарплата состоит из двух выплат',()=>{
+  const salaries=dec(sample()).filter(e=>e.kind==='income');
+  assert.deepEqual(salaries.map(e=>e.date),['2026-12-01','2026-12-16']);
+  assert.equal(sum(salaries.map(e=>e.amount)),90_500_000);
+});
+test('аванс ниже плана оставляет к получению только разницу',()=>{
+  const d=sample();
+  const e=dec(d).find(x=>x.rule==='advance')!;
+  d.transactions.push(create({kind:'income',amount:e.amount-100,from:'',to:'cash',event:e.id}));
+  assert.equal(remainingEvent({...e,status:'partial'},d.transactions),100);
+  assert.equal(cash(d),58_139_900);
+});
+test('перенос премии на раннюю дату оставляет одно событие',()=>{
+  const d=sample();
+  const e=calendar(d,'2027-01-01','2027-01-31').find(e=>e.rule==='quarter')!;
+  d.events.push({...e,date:'2027-01-10',status:'moved'});
+  assert.deepEqual(calendar(d,'2027-01-01','2027-01-31').filter(x=>x.rule==='quarter').map(x=>x.date),['2027-01-10']);
+});
+test('отменённое дежурство отсутствует в ожидаемом доходе',()=>{
+  const d=sample();
+  d.events.push({id:'duty',date:'2026-12-10',kind:'income',name:'Дежурства',rule:'',comment:'',amount:22500000,status:'canceled'});
+  assert.equal(remainingEvent(d.events[0],[]),0);
+});
+test('покупка 180 000 ₸ учитывается один раз и повышает расходы прогноза',()=>{
+  const a=sample(),b=sample();
+  a.purchases=[];b.purchases=[{...b.purchases[0],amount:18000000}];
+  const x=forecast(a,a.goals[0],date).rows[1], y=forecast(b,b.goals[0],date).rows[1];
+  assert.equal(y.expenses-x.expenses,18000000);
+});
+test('перерасход зависит от факта, а разовая покупка не удваивает расходы категории',()=>{
+  const d=sample(), c=d.categories[0];
+  d.transactions=[create({category:c.id,date:'2026-11-10',amount:c.budget+50}),create({id:'other',category:c.id,date:'2026-11-11',amount:100,event:'purchase@test'})];
+  assert.equal(categorySpent(d,c.id,date)-categoryBudget(d,c,date),50);
+});
+test('помощник сначала защищает комфортный минимум и расходует весь доступный остаток',()=>{
+  const d=sample(), items=allocation(d,date);
+  assert.equal(items[0].group,'living');
+  assert.equal(sum(items.map(i=>i.amount)),cash(d));
+  assert.ok(items.filter(i=>i.group==='living').every(i=>i.amount<=d.categories.find(c=>c.id===i.target)!.minimum));
+});
+test('полное досрочное погашение закрывает рассрочку',()=>{
+  const d=sample(), loan=d.debts[0];
+  d.transactions=[create({category:loan.id,amount:loan.balance})];
+  assert.equal(effectiveDebt(loan,d).balance,0);
+  assert.equal(schedule(effectiveDebt(loan,d)).length,0);
+  assert.equal(debtComparison(loan,14).saved,0);
+});
+test('частичное досрочное погашение снижает будущий платёж при выбранной настройке',()=>{
+  const d=sample(),loan=d.debts[0];
+  d.transactions=[create({category:loan.id,amount:loan.balance/2,reducePayment:true})];
+  assert.equal(effectiveDebt(loan,d).payment,loan.payment/2);
+  assert.equal(schedule(effectiveDebt(loan,d))[0].amount,loan.payment/2);
+});
+test('перевод между депозитами сохраняет капитал',()=>{
+  const d=sample();
+  const e=create({kind:'transfer',from:'ot',to:'bcc',amount:172300});
+  assert.equal(validateEntry(d,e),'');
+  assert.equal(sum(d.accounts.map(a=>balance(a,[e]))),sum(d.accounts.map(a=>a.opening)));
+});
+test('частичная продажа золота добавляет свободные деньги и убирает проданную долю',()=>{
+  const d=sample();
+  const e=create({kind:'sale',from:'gold',to:'cash',amount:100000,sold:101000});
+  assert.equal(validateEntry(d,e),'');
+  const gold=d.accounts.find(a=>a.id==='gold')!;
+  assert.equal(balance(gold,[e]),gold.opening-101000);
+  assert.equal(cash({...d,transactions:[e]})-cash(d),100000);
+});
+test('эффективная годовая ставка преобразуется в ставку за фактический срок',()=>{
+  const principal=80_000_000;
+  assert.equal(depositYield(principal,18,365,true),14_400_000);
+  assert.equal(depositYield(principal,18,90,true),Math.round(principal*(1.18**(90/365)-1)));
+  assert.notEqual(depositYield(principal,18,90,true),depositYield(principal,18,90));
+});
+test('госпремия исключает уже поощрённую сумму и соблюдает лимит',()=>{
+  assert.equal(bonus(1500000,432500,1000000),100000);
+  assert.equal(bonus(100_000_000,432500),17_300_000);
+  assert.equal(bonus(1000,432500,1000),0);
+});
+test('увеличение договорной суммы уменьшает расчётный ОП',()=>{
+  assert.equal(score(150000,15000000),10);
+  assert.equal(score(150000,30000000),5);
+});
+test('семейный ОП учитывает сумму вознаграждений на общем договоре',()=>{
+  assert.equal(score(100000+50000,30000000),5);
+  const d=sample();
+  d.accounts.find(a=>a.id==='ot2')!.interest=80000;
+  assert.ok(forecast(d,d.goals[0],date).rows[0].op>forecast(sample(),d.goals[0],date).rows[0].op);
+});
+test('задержка премии переносит поступление между месяцами',()=>{
+  const d=sample(), g=d.goals[0];
+  const base=forecast(d,g,date,d.scenarios[0]).rows;
+  const later=forecast(d,g,date,{...d.scenarios[0],bonusDelay:30}).rows;
+  assert.equal(base[2].income-later[2].income,59500000);
+  assert.equal(later[3].income-base[3].income,59500000);
+});
+test('помощник выбирает вклад только если он доступен к покупке',()=>{
+  const d=sample(), g=d.goals[0];
+  g.score=0;g.buffer=0;g.reserve=0;
+  const ok=allocation(d,date);
+  assert.ok(ok.some(x=>x.group==='bcc'));
+  d.accounts.find(a=>a.id==='bcc')!.maturity='2030-01-01';
+  const locked=allocation(d,date);
+  assert.ok(!locked.some(x=>x.group==='bcc'));
+  assert.ok(locked.some(x=>x.group==='free'));
+});
+test('потеря при досрочном закрытии сравнивается с пониженной номинальной ставкой',()=>{
+  const principal=50000000;
+  const loss=depositYield(principal,18,45,true)-depositYield(principal,0.1,45);
+  assert.ok(loss>0);
+  assert.equal(depositYield(principal,18,-10,true),0);
+});
+test('недостижимая цель возвращает дефицит и пустую дату',()=>{
+  const d=sample();d.rules=[];d.accounts=[];d.categories=[];
+  const p=forecast(d,d.goals[0],date);
+  assert.equal(p.reached,'');
+  assert.ok(p.deadline!.deficit>0);
+});
+test('подтверждение расхода расходует использованный резерв ровно один раз',()=>{
+  const d=sample();
+  d.plans=[{id:'plan',date,status:'accepted',items:[{id:'part',name:'Аренда',amount:cash(d),target:'',reason:'',group:'bills'}]}];
+  const cost=create({amount:100});
+  assert.notEqual(validateEntry(d,cost),'');
+  const linked={...cost,reservation:'part'};
+  assert.equal(validateEntry(d,linked),'');
+  const updated={...d,transactions:[linked]};
+  assert.equal(cash(updated),reserved(updated));
+  assert.equal(allocation(updated,date).length,0);
+});
+test('пустой профиль сохраняет свободный остаток нулевым',()=>{
+  assert.deepEqual(allocation(empty(),date),[]);
+});
+
+test('корректировка закрытого резерва сохраняет связь с историей',()=>{
+  const d=sample();
+  d.plans=[{id:'plan',date,status:'released',items:[{id:'part',name:'Резерв',amount:1000,target:'',reason:'',group:'bills'}]}];
+  const entry=create({amount:500,reservation:'part'});
+  assert.equal(validateEntry({...d,transactions:[entry]},{...entry,amount:900}),'');
+  assert.notEqual(validateEntry(d,entry),'');
+});
+
+test('прогноз для середины месяца не включает доход после крайнего срока',()=>{
+  const d=sample();
+  const goal={...d.goals[0],date:'2026-12-10',latest:'2026-12-31'};
+  const result=forecast(d,goal,date);
+  assert.equal(result.deadline?.date,goal.date);
+  assert.equal(result.deadline?.income,61000000);
+  assert.equal(result.latest?.income,29500000);
+});
