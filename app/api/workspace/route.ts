@@ -33,7 +33,7 @@ export async function PUT(request:Request){
   if(new Set(items.map(i=>i.id)).size!==items.length)return response('Резервы повторяются.',422);
   for(const entry of data.transactions){
     // Validate the shape and account references independently of historical ordering.
-    const error=validateEntry(validationData, {...entry,reservation:'',reserveUses:[]},false);
+    const error=validateEntry(validationData,entry,false);
     if(error||entry.date>today())return response(error||'Проверьте дату операции.',422);
     if(entry.event){
       const event=eventById.get(entry.event);

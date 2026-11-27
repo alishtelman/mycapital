@@ -3,7 +3,7 @@ import {X} from 'lucide-react';
 import {Button} from './ui/button';
 
 export type Value=string|number|boolean;
-export type Field={key:string;label:string;type?:'money'|'number'|'date'|'boolean'|'text'|'select';options?:[string,string][];optional?:boolean};
+export type Field={key:string;label:string;type?:'money'|'number'|'date'|'boolean'|'textarea'|'text'|'select';options?:[string,string][];optional?:boolean};
 export const field=(key:string,label:string,type?:Field['type'],optional=false):Field=>({key,label,type,optional});
 export const select=(key:string,label:string,options:[string,string][],optional=false):Field=>({key,label,type:'select',options,optional});
 export function FormModal({title,fields,initial,close,submit,busy,children,primaryFields}:{title:string;fields:Field[];initial:Record<string,Value>;close:()=>void;submit:(values:Record<string,Value>)=>void;busy:boolean;children?:ReactNode;primaryFields?:number}){
@@ -22,6 +22,7 @@ export function FormModal({title,fields,initial,close,submit,busy,children,prima
       return <label key={f.key} className={f.type==='boolean'?'checkbox':''}>
         {f.type==='boolean'?<><input type="checkbox" name={f.key} defaultChecked={Boolean(v)}/>{f.label}</>:<>{f.label}
         {f.type==='select'?<select name={f.key} defaultValue={String(v)} required={!f.optional}>{f.optional&&<option value="">—</option>}{f.options?.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select>:
+          f.type==='textarea'?<textarea name={f.key} defaultValue={String(v)} required={!f.optional} rows={6}/>:
           <input name={f.key} type={f.type==='money'||f.type==='number'?'number':f.type??'text'} defaultValue={f.type==='money'?Number(v)/100:String(v)} required={!f.optional} min={f.type==='number'||f.type==='money'?0:undefined} step={f.type==='money'?'0.01':'any'}/>}</>}
       </label>;
     });

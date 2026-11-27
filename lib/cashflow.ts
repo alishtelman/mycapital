@@ -1,4 +1,4 @@
-import {addDays,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,first,forecast,guaranteed,month,payDate,remainingEvent,reserved,score,sum,uses,usedReserve,type Data,type Entry,type Event} from './finance.ts';
+import {addDays,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,entryMonth,first,forecast,guaranteed,month,payDate,remainingEvent,reserved,score,sum,uses,usedReserve,type Data,type Entry,type Event} from './finance.ts';
 
 export function cashflow(d:Data,start:string,horizon=90){
   const end=addDays(start,horizon-1);
@@ -43,6 +43,16 @@ export function cashflow(d:Data,start:string,horizon=90){
       livingReleased:lifeRelease,cause:beforeIncome<0?(today.find(e=>e.kind==='expense')?.name??'Бюджет на жизнь и ранее назначенные платежи'):''});
   }
   return rows;
+}
+
+export function closedPeriodAvailability(d:Data,date:string){
+  const end=month(first(date),1);
+  const obligations=calendar(d,month(date,-12),end).filter(e=>e.kind==='expense'&&dueDate(e)<end)
+    .map(event=>({event,missing:Math.max(0,remainingEvent(event,d.transactions)-reserved(d,event.id))}))
+    .filter(row=>row.missing>0);
+  const required=sum(obligations.map(row=>row.missing));
+  const free=Math.max(0,cash(d)-reserved(d));
+  return {obligations,required,available:Math.max(0,free-required),shortage:Math.max(0,required-free)};
 }
 
 export function paymentState(d:Data,e:Event,date:string){
@@ -167,7 +177,7 @@ export function purchaseOptions(d:Data,date:string,price:number,purchaseDate=dat
 
 export function monthlyReport(d:Data,period:string){
   const start=first(period),end=month(start,1);
-  const tx=d.transactions.filter(e=>e.date>=start&&e.date<end);
+  const tx=d.transactions.filter(e=>entryMonth(e)===start);
   const savings=new Set(d.accounts.filter(a=>a.kind==='reserve'||a.kind==='bcc'||a.kind==='otbasy').map(a=>a.id));
   const before=d.transactions.filter(e=>e.date<start);
   const after=d.transactions.filter(e=>e.date<end);
@@ -177,7 +187,7 @@ export function monthlyReport(d:Data,period:string){
   const goalBalance=(entries:Entry[])=>sum(d.accounts.filter(a=>savings.has(a.id)&&a.goalIncluded!==false).map(a=>balance(a,entries)));
   const goalGap=goal?Math.max(0,downPayment(goal)+goal.reserve-goalBalance(after)):null;
   const goalProgress=goal&&goalGap!==null?Math.max(0,downPayment(goal)+goal.reserve-goalBalance(before))-goalGap:null;
-  return {goalGap,goalProgress,income:sum(tx.filter(t=>t.kind==='income').map(t=>t.amount)),expenses:sum(tx.filter(t=>t.kind==='expense').map(t=>t.amount)),
+  return {partial:!!d.settings.partialMonths?.[start],goalGap,goalProgress,income:sum(tx.filter(t=>t.kind==='income').map(t=>t.amount)),expenses:sum(tx.filter(t=>t.kind==='expense').map(t=>t.amount)),
     saved:sum(tx.filter(t=>t.kind==='transfer').map(t=>(savings.has(t.to)?t.amount:0)-(savings.has(t.from)?t.amount:0))),
     growth:sum(d.accounts.filter(a=>savings.has(a.id)).map(a=>balance(a,after)-balance(a,before))),
     scoreDelta:snapshot?.score!==undefined&&previous?.score!==undefined?snapshot.score-previous.score:null,

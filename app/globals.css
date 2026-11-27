@@ -171,3 +171,9 @@ details[open]>summary{margin-bottom:8px}
   .dashboard-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
   .dashboard-actions .button{min-height:44px}
 }
+
+main{max-width:1180px;margin-inline:auto}
+.capital-summary{background:#17392e;color:#f4fcf5;border-color:#17392e}
+.capital-summary .button{color:inherit;border-color:#84a696;background:transparent}
+.capital-summary :is(p,dt){color:#c7dcd0}
+.form-grid textarea{max-width:100%;background:var(--page);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}

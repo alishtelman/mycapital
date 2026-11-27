@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {allocation,calendar,cash,dailyBudget,days,effectiveDebt,empty,payDate,reserved,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Plan,type Rule} from '../lib/finance.ts';
-import {cashflow,closePaidExpense,detachExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
+import {cashflow,closedPeriodAvailability,closePaidExpense,detachExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
 import {dataSchema} from '../lib/schema.ts';
 
 const start='2026-12-01';
@@ -197,14 +197,38 @@ test('закрытый месяц сохраняет остаток и вычи�
   const rows=cashflow(d,'2026-11-27',4);
   assert.equal(rows[0].available,500_000);
   assert.equal(rows[3].available,400_000);
+  assert.equal(closedPeriodAvailability(d,'2026-11-27').available,400_000);
   d.transactions=[payment(event,event.amount)];
   const paid=cashflow(d,'2026-11-27',4);
   assert.equal(paid[3].available,400_000);
   assert.ok(!paid.some(row=>row.events.some(e=>e.id===event.id)));
+  assert.equal(closedPeriodAvailability(d,'2026-11-27').required,0);
 });
 
 test('открытый месяц не расходует месячный лимит целиком за оставшиеся дни',()=>{
   const d=setup(500_000);
   d.categories=[{id:'life',name:'На жизнь',budget:3_000_000,minimum:0,maximum:3_000_000,rank:1,flexible:true}];
   assert.equal(cashflow(d,'2026-11-27',4).at(-1)?.available,100_000);
+});
+
+test('история неполного месяца учитывает бюджетный период без повторного движения денег',()=>{
+  const d=setup(900_000);
+  const [cashAccount]=d.accounts;
+  d.accounts.push({...cashAccount,id:'deposit',kind:'bcc',opening:700_000});
+  const salary:Entry={id:'history-salary',date:'2026-10-29',budgetMonth:'2026-11-01',openingBalanceIncluded:true,name:'Зарплата',
+    kind:'income',amount:2_000_000,from:'',to:cashAccount.id,category:'',event:'',reservation:'',sold:0};
+  const advance={...salary,id:'history-advance',date:'2026-11-12',amount:900_000};
+  const transfer:Entry={...salary,id:'history-transfer',kind:'transfer',name:'Пополнение',date:'2026-11-13',from:cashAccount.id,to:'deposit',amount:700_000};
+  d.transactions=[salary,advance,transfer];
+  d.settings.partialMonths={'2026-11-01':true};
+  d.settings.closings={'2026-11-01':{date:'2026-11-28'}};
+  assert.equal(dataSchema.parse(d).transactions[0].openingBalanceIncluded,true);
+  assert.equal(monthlyReport(d,'2026-10-01').income,0);
+  const report=monthlyReport(d,'2026-11-01');
+  assert.equal(report.income,2_900_000);
+  assert.equal(report.saved,700_000);
+  assert.equal(report.partial,true);
+  assert.equal(cash(d),900_000);
+  assert.equal(cashflow(d,'2026-12-01',1)[0].available,900_000);
+  assert.match(validateEntry(d,{...salary,event:'scheduled-income'}),/Историческая/);
 });

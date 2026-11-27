@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,goalHoldings,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
+import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,goalHoldings,livingReserve,releaseLiving,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
+
+import {parseInstallments} from '../lib/installments.ts';
 
 const sample=():Data=>JSON.parse(readFileSync(new URL('../lib/demo.json',import.meta.url),'utf8'));
 const date='2026-11-27';
@@ -170,4 +172,49 @@ test('прогресс цели учитывает выделенные акти
     {...account,id:'shares',kind:'market',opening:10_000,goalIncluded:undefined},
   ];
   assert.deepEqual(goalHoldings(d,goal),{otbasy:100_000,bcc:50_000,market:30_000,cushion:20_000,total:200_000,downPaymentFunds:100_000});
+});
+
+test('освобождение кошелька на жизнь сохраняет фактический расход и остаток счёта',()=>{
+  const d=sample();
+  d.transactions=[create({amount:20_000,reservation:'envelope'})];
+  d.plans=[{id:'plan',date,status:'accepted',items:[{id:'envelope',target:'food',name:'Продукты',group:'living',reason:'',amount:80_000}]}];
+  assert.equal(livingReserve(d,'food'),60_000);
+  assert.equal(releaseLiving(d,'food',70_000),null);
+  const changed=releaseLiving(d,'food',60_000)!;
+  assert.equal(livingReserve(changed,'food'),0);
+  assert.equal(changed.plans[0].items[0].amount,20_000);
+  assert.equal(cash(changed),cash(d));
+  assert.deepEqual(changed.transactions,d.transactions);
+});
+
+test('график Kaspi учитывает уменьшающиеся платежи и частичную оплату один раз',()=>{
+  const d=sample();
+  const installments=parseInstallments('2026-12-05  1 200,50\n2027-01-05; 300');
+  assert.deepEqual(installments.map(row=>row.amount),[120_050,30_000]);
+  assert.throws(()=>parseInstallments('2026-02-30 100'));
+  const debt={id:'kaspi',name:'Kaspi',kind:'installment' as const,balance:150_050,payment:120_050,date:'2026-12-05',rate:0,apr:0,original:150_050,confirmed:true,installments};
+  d.debts=[debt];
+  const event=dec(d).find(row=>row.rule==='kaspi')!;
+  d.events=[{...event,status:'partial'}];
+  d.transactions=[create({event:event.id,amount:20_000})];
+  const updated=dec(d).find(row=>row.rule==='kaspi')!;
+  assert.equal(remainingEvent(updated,d.transactions),100_050);
+  assert.deepEqual(schedule(effectiveDebt(debt,d)).map(row=>row.amount),[100_050,30_000]);
+  d.transactions.push(create({id:'early',category:debt.id,amount:130_050}));
+  assert.equal(effectiveDebt(debt,d).balance,0);
+  assert.equal(remainingEvent(dec(d).find(row=>row.rule==='kaspi')!,d.transactions),0);
+});
+
+test('запланированная продажа переносит капитал в деньги один раз',()=>{
+  const d=sample(), asset=d.accounts.find(a=>a.kind==='market')!, goal=d.goals[0];
+  const scenario={...d.scenarios[0],market:100};
+  const value=100_000, proceeds=90_000;
+  d.settings.plannedSales=[{id:'test-sale',account:asset.id,date,value,proceeds}];
+  const before=forecast({...d,settings:{...d.settings,plannedSales:[]}},goal,date,scenario).rows[0];
+  const planned=forecast(d,goal,date,scenario).rows[0];
+  assert.equal(planned.capital,before.capital-value+proceeds);
+  const actual=create({kind:'sale',from:asset.id,to:d.accounts.find(a=>a.kind==='cash')!.id,amount:proceeds,sold:value,date,plannedSale:'test-sale'});
+  d.transactions=[actual];
+  assert.equal(forecast(d,goal,date,scenario).rows[0].capital,planned.capital);
+  assert.match(validateEntry(d,{...actual,id:'duplicate'}),/уже подтверждена/);
 });

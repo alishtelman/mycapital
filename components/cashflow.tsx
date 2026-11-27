@@ -1,9 +1,9 @@
 'use client';
 import {useState} from 'react';
 import {Bell,CalendarClock,Wallet} from 'lucide-react';
-import {monthlyReport,paymentState,purchaseOptions,reminders} from '../lib/cashflow';
+import {closedPeriodAvailability,monthlyReport,paymentState,purchaseOptions,reminders} from '../lib/cashflow';
 import {recommendedPurchase} from '../lib/workspace-view';
-import {dailyBudget,first,money,month,type Data,type Event} from '../lib/finance';
+import {dailyBudget,first,money,month,remainingEvent,type Data,type Event} from '../lib/finance';
 import {dayLabel,shortDate} from './dashboard';
 import {Blank} from './forms';
 import {Button} from './ui/button';
@@ -11,11 +11,16 @@ import {Button} from './ui/button';
 export function MoneyToday({data,date,clock,onEvent,plan,report}:{data:Data;date:string;clock:string;onEvent:(event:Event)=>void;plan:()=>void;report:()=>void}){
   const budget=dailyBudget(data,date);
   const closed=Boolean(data.settings.closings?.[first(date)]);
+  const closedBudget=closed?closedPeriodAvailability(data,date):null;
   const actions=reminders(data,date,clock).filter(n=>n.event&&(!closed||n.event.date<month(first(date),1))).slice(0,3);
   return <div className="split">
     <section className="card"><div className="section-head"><h2>{closed?'Свободные деньги после закрытия месяца':'Сколько могу потратить сегодня'}</h2><Wallet size={20}/></div>
       <strong className="large">{money(closed?budget.free:budget.daily)}</strong>
-      {closed?<p>Остаток можно потратить или отложить. Новый расчёт начнётся {shortDate(month(first(date),1))}.</p>:<>
+      {budget.income&&<p>Следующее поступление · {shortDate(budget.end)} · ожидается {money(remainingEvent(budget.income,data.transactions))}</p>}
+      {closed?<>{closedBudget&&closedBudget.required>0?<><p>На незакрытые платежи нужно оставить {money(closedBudget.required)}. После них доступно {money(closedBudget.available)}.</p>
+        {closedBudget.shortage>0&&<p className="loss">Не хватает {money(closedBudget.shortage)}.</p>}
+        <details><summary>Какие платежи остались</summary>{closedBudget.obligations.map(({event,missing})=><button className="list-row" key={event.id} onClick={()=>onEvent(event)}><b>{event.name}</b><strong>{money(missing)}</strong></button>)}</details>
+      </>:<p>Остаток можно потратить или отложить.</p>}<p>Новый расчёт начнётся {shortDate(month(first(date),1))}.</p></>:<>
         <p>{money(budget.forLife)} на жизнь до {budget.income?shortDate(budget.end):'конца расчётного периода'} · {budget.horizon} дн.</p>
         {budget.shortage>0&&<p className="loss">До обязательных платежей не хватает {money(budget.shortage)}.</p>}
         {budget.undated>0&&<p>Учтён запас на платежи без даты · {money(budget.undated)}.</p>}
@@ -24,7 +29,7 @@ export function MoneyToday({data,date,clock,onEvent,plan,report}:{data:Data;date
     </section>
     <section className="card"><div className="section-head"><h2>Что сделать сегодня</h2><CalendarClock size={20}/></div>
       {actions.length===0&&<p>Срочных действий нет.</p>}
-      {actions.length===0&&budget.income&&<p>{shortDate(budget.end)} · {budget.income.name}</p>}
+
       {actions.map(n=><button key={n.id} className="list-row" onClick={()=>onEvent(n.event!)}><span><b>{n.title}</b><small>{n.detail}</small></span><strong>{money(n.event!.amount)}</strong></button>)}
       <div className="quick">{!closed&&<Button variant="outline" onClick={plan}>Пересчитать распределение</Button>}<Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
     </section>
@@ -62,16 +67,17 @@ export function PurchaseCheck({data,date,request,close,apply,busy}:{data:Data;da
   </section></div>;
 }
 
-export function MonthReport({data,day,closeMonth,close}:{data:Data;day:string;closeMonth:(date:string)=>void;close:()=>void}){
+export function MonthReport({data,day,closeMonth,reopen,close}:{data:Data;day:string;closeMonth:(date:string)=>void;reopen:(date:string)=>void;close:()=>void}){
   const [period,P]=useState(first(day));
   const report=monthlyReport(data,period);
   return <div className="overlay" onClick={close}><section className="dialog" role="dialog" aria-modal="true" aria-label="Отчёт за месяц" onClick={e=>e.stopPropagation()}>
     <div className="dialog-header"><h2>Отчёт за месяц</h2><Button variant="ghost" onClick={close}>Закрыть</Button></div>
     <div className="inline"><Button variant="outline" onClick={()=>P(month(period,-1))}>Предыдущий</Button><b>{dayLabel(period)}</b><Button variant="outline" disabled={period>=first(day)} onClick={()=>P(month(period,1))}>Следующий</Button></div>
+    {report.partial&&<p>Неполный месяц. Доходы и расходы показаны по известным операциям.</p>}
     <dl>{Object.entries({Доходы:money(report.income),Расходы:money(report.expenses),'Отложено переводами':money(report.saved),'Изменение накоплений':money(report.growth),
       'Изменение ОП':report.scoreDelta?.toFixed(2)??'Нет двух сверок','Полученные проценты':report.interest===null?'Укажите при сверке':money(report.interest)}).map(([label,value])=><div className="report-term" key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {report.goalGap!==null&&<p>До цели к концу месяца · {money(report.goalGap)}. {report.goalProgress!==null&&report.goalProgress!==0?(report.goalProgress>0?'Цель ближе на ':'До цели стало дальше на ')+money(Math.abs(report.goalProgress))+'.':''}</p>}
-    <p>Переносимый бюджет · {report.surplus.map(x=>data.categories.find(c=>c.id===x.id)?.name+' '+money(x.amount)).join(' · ')||'—'}.</p>
-    {report.snapshot?<p>Месяц закрыт {shortDate(report.snapshot.date)}.</p>:<Button onClick={()=>closeMonth(period)}>Сверить и закрыть месяц</Button>}
+    <p>Неиспользованные лимиты · {report.surplus.map(x=>data.categories.find(c=>c.id===x.id)?.name+' '+money(x.amount)).join(' · ')||'—'}.</p>
+    {report.snapshot?<><p>Месяц закрыт {shortDate(report.snapshot.date)}{report.snapshot.date<month(period,1)?' досрочно':''}. Операции до конца месяца по-прежнему попадут в отчёт.</p><Button variant="outline" onClick={()=>reopen(period)}>Открыть месяц заново</Button></>:<Button onClick={()=>closeMonth(period)}>Сверить и закрыть месяц</Button>}
   </section></div>;
 }
