@@ -15,18 +15,19 @@ export function MoneyToday({data,date,clock,onEvent,plan,buy,expense,report}:{da
   return <div className="split">
     <section className="card"><div className="section-head"><h2>{closed?'Свободные деньги после закрытия месяца':'Сколько могу потратить сегодня'}</h2><Wallet size={20}/></div>
       <strong className="large">{money(closed?budget.free:budget.daily)}</strong>
-      {closed&&<p>Месяц закрыт. Можно использовать или распределить остаток.</p>}
-      <p>{closed?'По прогнозу до следующего поступления · ':''}{money(budget.forLife)} на жизнь до {budget.income?shortDate(budget.end):'конца расчётного периода'} · {budget.horizon} дн.</p>
-      {budget.shortage>0&&<p className="loss">До обязательных платежей не хватает {money(budget.shortage)}.</p>}
-      {budget.undated>0&&<p>Учтён запас на платежи без даты · {money(budget.undated)}.</p>}
-      {budget.delayed&&<p>Есть неподтверждённое поступление. Лимит рассчитан без него.</p>}
-      <div className="quick"><Button onClick={expense}><ArrowUpRight size={16}/> Добавить расход</Button><Button variant="outline" onClick={buy}>Могу ли я себе это позволить?</Button></div>
+      {closed?<p>Остаток можно потратить или отложить. Новый расчёт начнётся {shortDate(month(first(date),1))}.</p>:<>
+        <p>{money(budget.forLife)} на жизнь до {budget.income?shortDate(budget.end):'конца расчётного периода'} · {budget.horizon} дн.</p>
+        {budget.shortage>0&&<p className="loss">До обязательных платежей не хватает {money(budget.shortage)}.</p>}
+        {budget.undated>0&&<p>Учтён запас на платежи без даты · {money(budget.undated)}.</p>}
+        {budget.delayed&&<p>Есть неподтверждённое поступление. Лимит рассчитан без него.</p>}
+      </>}
+      <div className="quick"><Button onClick={expense}><ArrowUpRight size={16}/> Добавить расход</Button>{!closed&&<Button variant="outline" onClick={buy}>Могу ли я себе это позволить?</Button>}</div>
     </section>
     <section className="card"><div className="section-head"><h2>Что сделать сегодня</h2><CalendarClock size={20}/></div>
-      <p>Можно отложить прямо сейчас · <b>{money(budget.save)}</b></p>
+      {!closed&&<p>Можно отложить прямо сейчас · <b>{money(budget.save)}</b></p>}
       {actions.length===0&&budget.income&&<p>{shortDate(budget.end)} · {budget.income.name}</p>}
       {actions.map(n=><button key={n.id} className="list-row" onClick={()=>onEvent(n.event!)}><span><b>{n.title}</b><small>{n.detail}</small></span><strong>{money(n.event!.amount)}</strong></button>)}
-      <div className="quick"><Button variant="outline" onClick={plan}>Пересчитать распределение</Button><Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
+      <div className="quick">{!closed&&<Button variant="outline" onClick={plan}>Пересчитать распределение</Button>}<Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
     </section>
   </div>;
 }
