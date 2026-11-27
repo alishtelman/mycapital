@@ -1,4 +1,4 @@
-import {calendar, categoryBudget, effectiveDebt, first, month, remainingEvent, ruleAmount, sum, type Data, type forecast} from './finance.ts';
+import {calendar, categoryBudget, effectiveDebt, entryMonth, first, month, remainingEvent, ruleAmount, sum, type Data, type forecast} from './finance.ts';
 
 export function nextMonthPlan(data:Data,date:string,prediction:ReturnType<typeof forecast>|null,period=month(first(date),1)){
   const end=month(period,1);
@@ -22,7 +22,9 @@ export function nextMonthPlan(data:Data,date:string,prediction:ReturnType<typeof
     const projected=sum((prediction?.deposits??[]).filter(row=>row.account===account.id&&first(row.date)===period).map(row=>row.amount));
     const suggested=Math.min(remaining,projected);
     remaining-=suggested;
-    return {id:account.id,name:account.name,suggested};
+    const transferred=Math.max(0,sum(data.transactions.filter(t=>t.kind==='transfer'&&entryMonth(t)===period)
+      .map(t=>(t.to===account.id?t.amount:0)-(t.from===account.id?t.amount:0))));
+    return {id:account.id,name:account.name,suggested:suggested+transferred,transferred};
   });
   return {period,income,life,paymentTotal,obligations,savings};
 }

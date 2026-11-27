@@ -12,7 +12,7 @@ import {prepareReconciliation} from '../lib/reconciliation';
 import {parseInstallments} from '../lib/installments';
 import {calendarGroups} from '../lib/workspace-view';
 import {dataSchema} from '../lib/schema';
-import {Dashboard,dayLabel,kinds,shortDate} from './dashboard';
+import {Dashboard,MonthScreen,dayLabel,kinds,shortDate} from './dashboard';
 import {Blank,FormModal,field as f,select as s,type Field,type Value} from './forms';
 import {accountNames,editor,eventNames,groupNames,titles,type Entity} from './editors';
 import {Button} from './ui/button';
@@ -23,7 +23,7 @@ const FlowCalendar=dynamic(()=>import('./flow-calendar'));
 const url=process.env.NEXT_PUBLIC_SUPABASE_URL, key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const db=url&&key?createClient(url,key):null;
 const nav=[
-  ['dashboard','Главная',House],['budget','Бюджет',LayoutGrid],['calendar','Платежи',CalendarDays],
+  ['dashboard','Главная',House],['month','Месяц',LayoutGrid],['calendar','Платежи',CalendarDays],
   ['accounts','Накопления',Wallet],['debts','Кредиты',Coins],['goals','Цели',Target],
   ['analytics','Аналитика',ChartNoAxesCombined],['history','История операций',History],
   ['purchases','Планы и покупки',ShoppingBag],['settings','Настройки',Settings]
@@ -74,6 +74,7 @@ export function Workspace(){
   const [data,D]=useState<Data>(()=>dataSchema.parse(demo));
   const [section,S]=useState('dashboard');
   const [day,setDay]=useState('2026-11-27');
+  const [planPeriod,setPlanPeriod]=useState('');
   const [pointer,setPointer]=useState('2026-11-01');
   const [mode,setMode]=useState<'month'|'list'>('list');
   const [eventFilter,setEventFilter]=useState<'all'|Event['kind']>('all');
@@ -294,7 +295,7 @@ export function Workspace(){
         void persist({...data,rules,events},'Дежурства учтены в прогнозе зарплаты').then(ok=>{if(ok)M(null);});
       }});
   }
-  function quickIncome(){
+  function quickIncome(expected?:Event){
     const accounts=data.accounts.filter(a=>a.kind!=='market');
     const account=accounts.find(a=>a.kind==='cash')??accounts[0];
     if(!account){N('Сначала добавьте денежный счёт.');go('accounts');return;}
@@ -302,7 +303,7 @@ export function Workspace(){
     const sources=calendar(data,month(day,-1),month(day,2)).filter(e=>e.kind==='income'&&remainingEvent(e,data.transactions)>0);
     M({title:'Получил деньги',fields:[s('source','Источник поступления',[...sources.map(e=>[e.id,e.name+' · '+shortDate(e.date)] as [string,string]),...types.map(name=>[name,name] as [string,string])]),
       f('amount','Фактическая сумма, ₸','money'),f('date','Дата поступления','date'),s('to','Счёт зачисления',accounts.map(a=>[a.id,a.name])),f('budgetMonth','Месяц бюджета (любая дата месяца)','date',true)],
-      initial:{source:sources.find(e=>e.date===day)?.id??types[0],amount:0,date:day,to:account.id,budgetMonth:''},primaryFields:4,
+      initial:{source:expected?.id??sources.find(e=>e.date===day)?.id??types[0],amount:0,date:day,to:account.id,budgetMonth:''},primaryFields:4,
       actions:<p>Вводите всю полученную сумму, включая дежурства, если они входят в выплату.</p>,
       submit:v=>{
         const event=sources.find(e=>e.id===v.source);
@@ -775,7 +776,7 @@ export function Workspace(){
     </aside>
     {mobile&&<button className="backdrop" aria-label="Закрыть меню" onClick={()=>setMobile(false)}/>}
     <div className="workspace">
-      <header className="topbar"><div><Button variant="ghost" className="mobile-menu" onClick={()=>setMobile(true)} aria-label="Меню"><Menu size={22}/></Button><b>{current?.[1]??(section==='checklist'?'План принят':'Ещё')}</b></div><div>
+      <header className="topbar"><div><Button variant="ghost" className="mobile-menu" onClick={()=>setMobile(true)} aria-label="Меню"><Menu size={22}/></Button><b>{current?.[1]??(section==='checklist'?'План принят':section==='budget'?'Бюджет':'Ещё')}</b></div><div>
         <Button variant="ghost" aria-label="Уведомления" onClick={()=>setInbox(true)}><Bell size={19}/>{alerts.length>0&&<span className="alert-count">{alerts.length}</span>}</Button>
         <span className="currency"><span/> KZT</span>
         <Button variant="ghost" onClick={toggleTheme} aria-label={theme?'Светлая тема':'Тёмная тема'}>{theme?<Sun size={19}/>:<Moon size={19}/>}</Button>
@@ -784,8 +785,11 @@ export function Workspace(){
       <main>
         {section==='more'&&<><div className="page-heading"><h1>Ещё</h1></div><section className="card">{nav.slice(4).filter(([id])=>id!=='goals'&&id!=='purchases').map(([id,label,Icon])=><button className="list-row" key={id} onClick={()=>go(id)}><span className="inline"><Icon size={18}/><b>{label}</b></span><ChevronRight size={16}/></button>)}</section></>}
         {section==='dashboard'&&session&&!workspace&&<section className="card"><p>Загружаем данные аккаунта.</p></section>}
-        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} updateBalance={updateStartingCash} editPlan={editNextMonthPlan} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
-        {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('budget')}>Вернуться в бюджет</Button>)}{reservesPanel}</>}
+        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} updateBalance={updateStartingCash} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
+        {section==='month'&&<MonthScreen data={data} date={day} period={planPeriod||month(first(day),1)} prediction={currentForecast} changePeriod={setPlanPeriod}
+          editPlan={editNextMonthPlan} openBudget={()=>go('budget')} openPayments={()=>{setPointer(planPeriod||month(first(day),1));go('calendar');}}
+          report={()=>{setReportPeriod(planPeriod||month(first(day),1));setShowReport(true);}}/>}
+        {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('month')}>Вернуться к плану</Button>)}{reservesPanel}</>}
         {section==='budget'&&<>
           {heading('Бюджет','Расходы и платежи на месяц.',<Button onClick={quickExpense}><Plus size={18}/> Добавить расход</Button>)}
           <div className="quick"><Button variant="outline" onClick={()=>go('purchases')}>Планы и покупки</Button><Button variant="outline" onClick={()=>openPlan()}>Распределить деньги</Button></div>

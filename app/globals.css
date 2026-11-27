@@ -177,3 +177,12 @@ main{max-width:1180px;margin-inline:auto}
 .capital-summary .button{color:inherit;border-color:#84a696;background:transparent}
 .capital-summary :is(p,dt){color:#c7dcd0}
 .form-grid textarea{max-width:100%;background:var(--page);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
+
+.main-operation{justify-self:start}
+.operation-sheet{display:grid;gap:8px}
+@media(max-width:570px){
+  .main-operation{justify-self:stretch;min-height:44px}
+  .overlay:has(.operation-sheet){align-items:end;padding:0}
+  .operation-sheet{width:100%;max-width:none;border-radius:16px 16px 0 0;padding-bottom:max(16px,env(safe-area-inset-bottom))}
+  .operation-sheet .button{min-height:44px}
+}
