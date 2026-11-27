@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,goalHoldings,livingReserve,releaseLiving,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
+import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,goalHoldings,livingReserve,releaseLiving,remainingEvent,reserved,savingPlanProgress,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
 
 import {parseInstallments} from '../lib/installments.ts';
 
@@ -231,4 +231,35 @@ test('доля счёта и назначение разделяют взнос 
   assert.equal(result.downPaymentFunds,100_000);
   assert.equal(result.cushion,25_000);
   assert.equal(sum(d.accounts.map(a=>balance(a,d.transactions))),400_000);
+});
+
+test('после зарплаты помощник учитывает переводы и резервы месяца и сначала покрывает платежи',()=>{
+  const d=sample();
+  const cashAccount=d.accounts.find(a=>a.kind==='cash')!;
+  const otbasy=d.accounts.find(a=>a.kind==='otbasy')!;
+  const bcc=d.accounts.find(a=>a.kind==='bcc')!;
+  d.accounts=[{...cashAccount,opening:120_000},otbasy,bcc];
+  d.debts=[];d.purchases=[];d.categories=[];
+  d.rules=[{id:'bill',name:'Счёт',kind:'expense',amount:50_000,date,repeat:'once',active:true}];
+  d.settings.monthlySavingPlan={'2026-12-01':{[otbasy.id]:100_000,[bcc.id]:30_000}};
+  d.transactions=[create({id:'transfer',kind:'transfer',from:cashAccount.id,to:otbasy.id,amount:20_000,date,budgetMonth:'2026-12-01'})];
+  d.plans=[{id:'previous',date,status:'accepted',items:[{id:'saved',group:'otbasy',target:otbasy.id,name:otbasy.name,amount:10_000,reason:''}]}];
+  const items=allocation(d,date,undefined,'2026-12-01');
+  assert.equal(items.find(item=>item.group==='bills')?.amount,50_000);
+  assert.equal(items.find(item=>item.group==='otbasy')?.amount,40_000);
+  assert.equal(items.find(item=>item.group==='bcc'),undefined);
+  assert.deepEqual(savingPlanProgress(d,'2026-12-01',items).map(row=>row.left),[30_000,30_000]);
+  assert.equal(sum(items.map(item=>item.amount)),cash(d)-reserved(d));
+});
+
+test('выполненный план пополнений не превращает свободный остаток в дополнительное пополнение',()=>{
+  const d=sample();
+  const cashAccount=d.accounts.find(a=>a.kind==='cash')!;
+  const bcc=d.accounts.find(a=>a.kind==='bcc')!;
+  d.debts=[];d.purchases=[];d.categories=[];d.rules=[];
+  d.settings.monthlySavingPlan={'2026-11-01':{[bcc.id]:25_000}};
+  d.transactions=[create({kind:'transfer',from:cashAccount.id,to:bcc.id,amount:25_000,date})];
+  const items=allocation(d,date);
+  assert.deepEqual(items.map(item=>item.group),['free']);
+  assert.equal(items[0].amount,cash(d));
 });

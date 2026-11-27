@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
-import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,entryMonth,first,forecast,goalHoldings,goalPurpose,goalShare,livingReserve,releaseLiving,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
+import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,entryMonth,first,forecast,goalHoldings,goalPurpose,goalShare,livingReserve,releaseLiving,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,savingPlanProgress,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
 import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
 import {nextMonthPlan} from '../lib/month-plan';
@@ -97,6 +97,7 @@ export function Workspace(){
   const [accountHistory,setAccountHistory]=useState('');
   const [metric,setMetric]=useState<keyof Omit<ReturnType<typeof forecast>['rows'][number],'date'>>('savings');
   const [received,setReceived]=useState(0);
+  const [allocationPeriod,setAllocationPeriod]=useState('');
   const demoMode=!workspace;
   const [settled,setSettled]=useState(false);
   useEffect(()=>{
@@ -308,7 +309,7 @@ export function Workspace(){
       submit:v=>{
         const event=sources.find(e=>e.id===v.source);
         commitEntry({id:crypto.randomUUID(),kind:'income',name:event?.name??String(v.source),date:String(v.date),amount:Number(v.amount),from:'',to:String(v.to),
-          budgetMonth:v.budgetMonth?first(String(v.budgetMonth)):undefined,category:'',event:event?.id??'',reservation:'',sold:0},event);
+          budgetMonth:v.budgetMonth?first(String(v.budgetMonth)):event?first(event.date):undefined,category:'',event:event?.id??'',reservation:'',sold:0},event);
       }});
   }
   function reconcileMonth(){
@@ -513,6 +514,14 @@ export function Workspace(){
         void persist({...data,transactions:[...data.transactions,...corrections]},'Остатки сверены').then(ok=>{if(ok)M(null);});
       }});
   }
+  const goal=data.goals.find(g=>!g.completed);
+  const activeScenario=data.scenarios.find(x=>x.id===scenario)??data.scenarios[0];
+  const recommendation=useMemo(()=>optimized&&goal?optimizeSavings(data,goal,day,activeScenario):null,[optimized,data,goal,day,activeScenario]);
+  const currentForecast=useMemo(()=>{
+    const goal=data.goals.find(g=>!g.completed);
+    const selected=data.scenarios.find(item=>item.id===scenario)??data.scenarios[0];
+    return goal?forecast(data,goal,day,selected):null;
+  },[data,day,scenario]);
   function editNextMonthPlan(period:string){
     const plan=nextMonthPlan(data,day,currentForecast,period);
     const existing=data.settings.monthlySavingPlan?.[plan.period];
@@ -532,7 +541,10 @@ export function Workspace(){
       commitEntry({id:crypto.randomUUID(),kind:'valuation',date:String(v.date),name:'Сверка · '+account.name,amount:Math.abs(delta),from:delta<0?account.id:'',to:delta>0?account.id:'',category:'',event:'',reservation:'',sold:0});
     }});
   }
-  function openPlan(next=data,amount=received){setEditingDraft(false);setReceived(amount);setDraft(allocation(next,day,next.scenarios.find(s=>s.id===scenario)));}
+  function openPlan(next=data,amount=0,period=first(day)){
+    setEditingDraft(false);setReceived(amount);setAllocationPeriod(period);
+    setDraft(allocation(next,day,next.scenarios.find(s=>s.id===scenario),period));
+  }
   function commitEntry(entry:Entry,event?:Event){
     if(!/\d{4}-\d{2}-\d{2}/.test(entry.date)||!entry.name){N('Заполните название и дату.');return;}
     const error=validateEntry(data,entry);
@@ -545,7 +557,7 @@ export function Workspace(){
       next={...next,events:setRow(data.events,updated),plans:trimPaymentReserves(next,updated)};
     }
     void persist(next,'Операция сохранена').then(ok=>{
-      if(ok){M(null);if(entry.kind==='income')openPlan(next,entry.amount);}
+      if(ok){M(null);if(entry.kind==='income')openPlan(next,entry.amount,entryMonth(entry));}
     });
   }
   function operation(kind:Entry['kind'],event?:Event,item?:Item,existing?:Entry,preset?:Partial<Entry>){
@@ -654,7 +666,7 @@ export function Workspace(){
     if(draft.some(i=>['otbasy','bcc','reserve','debt'].includes(i.group)&&i.amount>0)&&
       sum(draft.filter(i=>['otbasy','bcc','reserve','debt'].includes(i.group)).map(i=>i.amount))>dailyBudget(data,day).save){N('Для накоплений сейчас доступно меньше: сначала защитите платежи, покупки и минимум на жизнь.');return;}
     if(!allocated.length){N('Выберите сумму для резервирования.');return;}
-    const baseline=allocation(data,day,data.scenarios.find(s=>s.id===scenario));
+    const baseline=allocation(data,day,data.scenarios.find(s=>s.id===scenario),allocationPeriod);
     if(baseline.some(i=>i.group==='living'&&i.amount>(draft.find(j=>j.id===i.id)?.amount??0))
       &&!window.confirm('Вы уменьшили резерв на комфортный минимум. Подтвердить исключение для этого распределения?'))return;
     void persist({...data,plans:[...data.plans,{id:crypto.randomUUID(),date:day,items:allocated,status:'accepted'}]},'Распределение принято').then(ok=>{if(ok){setDraft(null);go('checklist');}});
@@ -711,10 +723,6 @@ export function Workspace(){
     await db?.auth.signOut({scope:'local'});
   }
 
-  const goal=data.goals.find(g=>!g.completed);
-  const activeScenario=data.scenarios.find(x=>x.id===scenario)??data.scenarios[0];
-  const recommendation=useMemo(()=>optimized&&goal?optimizeSavings(data,goal,day,activeScenario):null,[optimized,data,goal,day,activeScenario]);
-  const currentForecast=useMemo(()=>goal?forecast(data,goal,day,activeScenario):null,[data,goal,day,activeScenario]);
   const draftForecast=useMemo(()=>{
     if(!draft||!goal||!draft.length)return null;
     const plan:Plan={id:'preview',date:day,status:'accepted',items:draft.filter(i=>i.group!=='free')};
@@ -744,6 +752,7 @@ export function Workspace(){
   const visibleEvents=currentEvents.filter(e=>e.kind!=='notice'&&(eventFilter==='all'||e.kind===eventFilter));
   const openEvents=visibleEvents.filter(e=>e.kind!=='expense'||remainingEvent(e,data.transactions)>0);
   const settledEvents=visibleEvents.filter(e=>e.kind==='expense'&&e.status!=='canceled'&&remainingEvent(e,data.transactions)===0);
+  const contributionProgress=draft?savingPlanProgress(data,allocationPeriod,draft):[];
   const current=nav.find(n=>n[0]===section);
   const toggleTheme=()=>{localStorage.setItem('theme',theme?'light':'dark');setTheme(!theme);};
   const heading=(title:string,description:string,action?:React.ReactNode)=><div className="page-heading"><div><h1>{title}</h1><p>{description}</p></div>{action}</div>;
@@ -1053,6 +1062,11 @@ export function Workspace(){
       <p>Обязательные платежи {money(wallet.obligations)} · покупки {money(wallet.planned)} · на жизнь {money(wallet.forLife)} · можно отложить {money(wallet.save)}.</p>
       <p>{wallet.income?'Следующий доход '+shortDate(wallet.end):'Расчёт на '+wallet.horizon+' дн.'}{wallet.shortage?' · дефицит обязательных платежей '+money(wallet.shortage):''}.</p></details>
       <p>{received>0?'Получено '+money(received)+' · ':''}Доступно {money(Math.max(0,cash(data)-reserved(data)))}</p>
+      {contributionProgress.length>0&&<section className="budget-tip"><h3>Пополнения · {dayLabel(allocationPeriod)}</h3>
+        {contributionProgress.map(row=><div className="list-row" key={row.id}><span><b>{row.name}</b>
+          <small>План {money(row.target)} · переведено {money(row.transferred)}{row.held>0?' · уже отложено '+money(row.held):''}</small>
+          {row.left>0&&<small>Останется пополнить {money(row.left)}</small>}</span><span><strong>{money(row.proposed)}</strong><small>Отложить сейчас</small></span></div>)}
+      </section>}
       {draft.length===0&&<Blank>Свободных средств для распределения пока нет.</Blank>}
       {received>0&&!editingDraft&&<div>{Object.entries(groupNames).map(([group,label])=>{
         const amount=sum(draft.filter(i=>i.group===group).map(i=>i.amount));
@@ -1069,7 +1083,7 @@ export function Workspace(){
       </details>
       {editingDraft&&<p>Ликвидный остаток · {money(draft.find(i=>i.group==='free')?.amount??0)}</p>}
       {goal&&currentForecast&&draftForecast&&<details className="budget-tip"><summary>Как изменится прогноз</summary><p>Дефицит к сроку {money(draftForecast.deadline?.deficit??0)} · ОП {draftForecast.deadline?.op.toFixed(2)??'—'}</p><p>Дата покупки в текущем плане: {currentForecast.reached?dayLabel(currentForecast.reached):'за горизонтом прогноза'}. С выбранным планом: {draftForecast.reached?dayLabel(draftForecast.reached):'за горизонтом прогноза'}.</p></details>}
-      <div className="actions wrap"><Button variant="ghost" onClick={()=>setDraft(null)}>Отложить</Button><Button variant="outline" onClick={()=>openPlan()}>Пересчитать</Button><Button variant="outline" disabled={!draft.length} onClick={()=>setEditingDraft(!editingDraft)}>{editingDraft?'Готово':'Изменить распределение'}</Button><Button disabled={busy||!draft.some(i=>i.group!=='free'&&i.amount>0)} onClick={accept}>Принять план</Button></div>
+      <div className="actions wrap"><Button variant="ghost" onClick={()=>setDraft(null)}>Отложить</Button><Button variant="outline" onClick={()=>openPlan(data,received,allocationPeriod)}>Пересчитать</Button><Button variant="outline" disabled={!draft.length} onClick={()=>setEditingDraft(!editingDraft)}>{editingDraft?'Готово':'Изменить распределение'}</Button><Button disabled={busy||!draft.some(i=>i.group!=='free'&&i.amount>0)} onClick={accept}>Принять план</Button></div>
     </section></div>}
     {authMode&&<div className="overlay" onClick={()=>A(null)}><section className="dialog small-dialog" role="dialog" aria-modal="true" aria-label="Вход" onClick={e=>e.stopPropagation()}>
       <div className="dialog-header"><h2>{authMode==='signUp'?'Создать аккаунт':authMode==='magic'?'Войти по ссылке':authMode==='reset'?'Восстановить доступ':authMode==='recover'?'Задать новый пароль':'Войти в MyCapital'}</h2><Button variant="ghost" onClick={()=>A(null)} aria-label="Закрыть">×</Button></div>

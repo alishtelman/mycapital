@@ -262,7 +262,26 @@ export function dailyBudget(d:Data,date:string){
     save:Math.max(0,free-obligations-planned-sum(categories.map(c=>c.minimum)))};
 }
 
-export function allocation(d:Data,date:string,choice?:Scenario):Item[]{
+export function depositTransfers(d:Data,accountId:string,period:string){
+  return Math.max(0,sum(d.transactions.filter(t=>t.kind==='transfer'&&entryMonth(t)===period)
+    .map(t=>(t.to===accountId?t.amount:0)-(t.from===accountId?t.amount:0))));
+}
+
+export function savingPlanProgress(d:Data,period:string,draft:Item[]=[]){
+  const targets=d.settings.monthlySavingPlan?.[period];
+  if(!targets)return [];
+  return d.accounts.flatMap(account=>{
+    const target=targets[account.id];
+    if(target===undefined||(account.kind!=='otbasy'&&account.kind!=='bcc'))return [];
+    const transferred=depositTransfers(d,account.id,period);
+    const held=sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(item=>item.group===account.kind&&item.target===account.id)
+      .map(item=>Math.max(0,item.amount-usedReserve(d.transactions,item.id)))));
+    const proposed=sum(draft.filter(item=>item.group===account.kind&&item.target===account.id).map(item=>item.amount));
+    return [{id:account.id,group:account.kind,name:account.name,target,transferred,held,proposed,left:Math.max(0,target-transferred-held-proposed)}];
+  });
+}
+
+export function allocation(d:Data,date:string,choice?:Scenario,period=first(date)):Item[]{
   let left=Math.max(0,cash(d)-reserved(d));
   const {needs,purchases,end:next}=billNeeds(d,date);
   const goal=d.goals.find(g=>!g.completed);
@@ -273,7 +292,9 @@ export function allocation(d:Data,date:string,choice?:Scenario):Item[]{
   }
   let undatedHeld=0;
   const protectedGroups=['bills','living','purchases'];
-  for(const group of [...new Set([...protectedGroups,...d.settings.priority,...empty().settings.priority])].filter(g=>g!=='free')){
+  const personalPlan=d.settings.monthlySavingPlan?.[period];
+  const groups=personalPlan?protectedGroups:[...new Set([...protectedGroups,...d.settings.priority,...empty().settings.priority])].filter(g=>g!=='free');
+  for(const group of groups){
     if(group==='bills'){
       for(const {event,amount,reason} of needs)add(group,event.id,event.name,amount+reserved(d,event.id),reason);
       undatedHeld=Math.min(left,undatedObligations(d));
@@ -312,6 +333,16 @@ export function allocation(d:Data,date:string,choice?:Scenario):Item[]{
       const current=effectiveDebt(loan,d);
       const comparison=debtComparison(current,Math.max(0,...d.accounts.filter(a=>a.kind==='bcc').map(a=>a.rate)));
       if(comparison.net>0&&left>=current.balance) add(group,loan.id,loan.name,current.balance,'Экономия процентов выше упущенного дохода');
+    }
+  }
+  if(personalPlan){
+    let available=Math.min(left,dailyBudget(d,date).save);
+    for(const row of savingPlanProgress(d,period)){
+      const amount=Math.min(available,row.left);
+      if(!amount)continue;
+      items.push({id:row.group+':'+row.id,group:row.group,target:row.id,name:row.name,amount,reason:'По твоему плану на месяц'});
+      available-=amount;
+      left-=amount;
     }
   }
   left+=undatedHeld;
