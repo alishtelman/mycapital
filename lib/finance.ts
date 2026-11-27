@@ -1,6 +1,6 @@
 export type Account = {id:string; name:string; kind:'cash'|'otbasy'|'bcc'|'reserve'|'market'; owner:string; opening:number; rate:number; basis:number; maturity:string; contract:number; futureContract:number; score:number; interest:number; eligible:number; awarded:number; fee:number; earlyRate:number; opened:string; rollover:boolean; balanceDate?:string; liquidity?:'liquid'|'term'; nominal?:number; termMonths?:number; goalIncluded?:boolean};
 export type Entry = {id:string; date:string; name:string; kind:'income'|'expense'|'transfer'|'sale'|'valuation'; amount:number; from:string; to:string; category:string; event:string; reservation:string; sold:number; reducePayment?:boolean; finalPayment?:boolean; reserveUses?:{id:string;amount:number}[]; comment?:string};
-export type Event = {id:string; name:string; date:string; kind:'income'|'expense'|'saving'|'notice'; amount:number; status:'planned'|'partial'|'received'|'moved'|'canceled'; rule:string; comment:string; deadline?:string; payment?:Payment};
+export type Event = {id:string; name:string; date:string; kind:'income'|'expense'|'saving'|'notice'; amount:number; status:'planned'|'partial'|'received'|'settled_before_tracking'|'moved'|'canceled'; rule:string; comment:string; deadline?:string; payment?:Payment};
 export type Payment = {category?:string; minimum?:number; maximum?:number; account?:string; priority?:number; partial?:boolean; early?:boolean; automatic?:boolean; reminders?:number[]; comment?:string; grace?:number; discount?:number};
 export type Rule = {id:string; name:string; kind:'income'|'expense'; amount:number; date:string; base?:number; percent?:number; repeat:'monthly'|'weekly'|'fortnightly'|'bimonthly'|'quarterly'|'semiannual'|'yearly'|'once'|'custom'; active:boolean; payment?:Payment; dates?:string[]; uncertain?:boolean};
 export type Category = {id:string; name:string; budget:number; minimum:number; maximum:number; rank:number; flexible:boolean};
@@ -42,7 +42,7 @@ export const usedReserve = (entries:Entry[],id:string) => sum(entries.flatMap(us
 export const reserved = (d:Data,target?:string) => sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(i=>!target||i.target===target)
   .map(i=>Math.max(0,i.amount-usedReserve(d.transactions,i.id)))));
 export const cash = (d:Data) => sum(d.accounts.filter(a=>a.kind==='cash').map(a=>balance(a,d.transactions)));
-export const remainingEvent = (e:Event,entries:Entry[]) => ['received','canceled'].includes(e.status)?0:Math.max(0,e.amount-sum(entries.filter(t=>t.event===e.id).map(t=>t.amount)));
+export const remainingEvent = (e:Event,entries:Entry[]) => ['received','settled_before_tracking','canceled'].includes(e.status)?0:Math.max(0,e.amount-sum(entries.filter(t=>t.event===e.id).map(t=>t.amount)));
 
 export function schedule(debt:Debt, limit=600) {
   let remaining=debt.balance;

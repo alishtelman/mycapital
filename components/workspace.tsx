@@ -4,7 +4,7 @@ import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
 import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
-import {closePaidExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
+import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {FlowCalendar,MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
 import {dataSchema} from '../lib/schema';
 import {Dashboard,ForecastChart,dayLabel,kinds,shortDate} from './dashboard';
@@ -334,12 +334,23 @@ export function Workspace(){
     if(kind!=='expense')fields.push(s('to','Зачислить на счёт',available.filter(a=>kind!=='sale'||a.kind==='cash').map(a=>[a.id,a.name])));
     if(kind==='expense'&&(preset?.category||existing?.reducePayment!==undefined)&&data.debts.some(d=>d.id===(preset?.category??existing?.category)))fields.push(f('reducePayment','Уменьшить платёж (иначе сократить срок)','boolean'));
     if(kind==='sale')fields.push(f('sold','Рыночная стоимость продаваемой части, ₸','money'));
-    if(kind==='expense'&&!item&&!matchingEvent&&!preset?.category)fields.push(s('category','Категория бюджета',data.categories.map(c=>[c.id,c.name]),true));
+    if(kind==='expense'&&!item&&(!matchingEvent||existing)&&!preset?.category)fields.push(s('category','Категория бюджета',data.categories.map(c=>[c.id,c.name]),true));
+    if(existing&&matchingEvent&&kind==='expense')fields.push(f('detach','Отвязать расход от календарного платежа','boolean'));
     if(!matchingEvent&&(kind==='income'||kind==='expense')&&!preset?.category)fields.push(s('event','Сопоставить с календарём',openEvents.map(e=>[e.id,e.name+' · '+shortDate(e.date)]),true));
     if((kind==='income'||kind==='expense')&&(matchingEvent||openEvents.length)&&!preset?.category)fields.push(f('finalPayment','Остаток по этому событию не ожидается','boolean'));
     if(!item&&!matchingEvent&&kind!=='income'&&!existing)fields.push(s('reservation','Использовать резерв',planRows(data).map(i=>[i.id,i.name+' · '+money(i.left)]),true));
     M({title:existing?'Исправить операцию':kindNames[kind],fields,initial:scalarFields(existing??newEntry),submit:v=>{
-      const e={...(existing??newEntry),...v} as Entry;
+      const {detach,...values}=v;
+      const e={...(existing??newEntry),...values} as Entry;
+      if(detach){
+        const next=detachExpense(data,e);
+        if(next===data)return;
+        const saved=next.transactions.find(t=>t.id===e.id)!;
+        const error=validateEntry(next,saved);
+        if(error){N(error);return;}
+        void persist(next,'Расход отвязан от платежа').then(ok=>{if(ok)M(null);});
+        return;
+      }
       if(e.reducePayment&&e.kind!=='expense')delete e.reducePayment;
       const selected=matchingEvent??openEvents.find(x=>x.id===e.event);
       const direct=item??planRows(data).find(i=>i.id===e.reservation);
@@ -387,6 +398,11 @@ export function Workspace(){
           void persist(closePaidExpense(data,event,day),'Платёж закрыт').then(ok=>{if(ok)M(null);});
         }}>Закрыть без доплаты</Button>
       </>}
+      {status&&active&&status.actual===0&&event.date<=day&&<Button variant="outline" disabled={busy} onClick={()=>{
+        const updated:Event={...event,status:'settled_before_tracking'};
+        const next={...data,events:setRow(data.events,updated)};
+        void persist({...next,plans:trimPaymentReserves(next,updated)},'Отмечено без списания').then(ok=>{if(ok)M(null);});
+      }}>Уже оплачено до начала учёта</Button>}
       {status&&status.missing>0&&<Button variant="outline" onClick={()=>reservePayment(event)}>Зарезервировать</Button>}
       {active&&event.kind==='income'&&<Button variant="outline" onClick={()=>operation('income',event)}>Получил деньги</Button>}
     </>,submit:v=>{
@@ -472,6 +488,19 @@ export function Workspace(){
     return forecast({...data,plans:[...data.plans,plan]},goal,day,activeScenario);
   },[draft,goal,data,day,activeScenario]);
   const currentEvents=useMemo(()=>calendar(data,pointer,month(pointer,1)).filter(e=>e.date<month(pointer,1)),[data,pointer]);
+  const ruleDates=useMemo(()=>{
+    const upcoming=new Map<string,string>();
+    for(const event of calendar(data,day,month(day,15))){
+      if(event.rule&&!upcoming.has(event.rule)&&remainingEvent(event,data.transactions)>0)upcoming.set(event.rule,event.date);
+    }
+    return upcoming;
+  },[data,day]);
+  const ruleDetail=(r:Rule)=>{
+    if(!r.active)return 'Архив';
+    const next=ruleDates.get(r.id);
+    if(next)return (r.kind==='expense'?'Следующий платёж: ':'Следующее поступление: ')+shortDate(next);
+    return r.date||r.dates?.length?'Ближайших событий нет':'Нужно указать дату';
+  };
   const reserves=planRows(data);
   const wallet=useMemo(()=>dailyBudget(data,day),[data,day]);
   const alerts=useMemo(()=>reminders(data,day,clock),[data,day,clock]);
@@ -510,7 +539,7 @@ export function Workspace(){
         {section==='budget'&&<>
           {heading('Бюджет','Планируйте расходы на месяц и подтверждайте распределение поступлений.',<Button onClick={()=>openPlan()}><Sparkles size={18}/> Распределить {money(Math.max(0,cash(data)-reserved(data)))}</Button>)}
           <section className="card"><div className="section-head"><div><h2>Обязательные платежи</h2><p>Даты, суммы и напоминания</p></div><Button onClick={()=>editPayment()}><Plus size={18}/> Новый платёж</Button></div>
-            {data.rules.filter(r=>r.kind==='expense').map(r=>row(r.name,r.active?r.date?shortDate(r.date):r.repeat==='custom'?'Пользовательский график':'Нужно указать дату':'Архив',money(ruleAmount(r)),()=>editPayment(r)))}
+            {data.rules.filter(r=>r.kind==='expense').map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>editPayment(r)))}
             <Button variant="outline" onClick={()=>setShowReport(true)}>Закрытие и отчёт за месяц</Button>
           </section>
           <div className="split">
@@ -559,10 +588,14 @@ export function Workspace(){
               const date=pointer.slice(0,8)+String(i+1).padStart(2,'0');
               return <div className={'calendar-cell '+(date===day?'current-date':'')} key={date}><span>{i+1}</span>{currentEvents.filter(e=>e.date===date).map(e=><button key={e.id} title={e.name} className={'event-chip '+e.kind+' '+e.status} onClick={()=>eventEditor(e)}>{e.name}</button>)}</div>;
             })}
-          </div>:currentEvents.length?currentEvents.map(e=>row(e.name,shortDate(e.date)+' · '+eventNames[e.status],e.amount?money(e.amount):'—',()=>eventEditor(e))):<Blank>В этом месяце нет событий.</Blank>}
+          </div>:currentEvents.length?currentEvents.map(e=>{
+            const status=e.kind==='expense'?paymentState(data,e,day):null;
+            return row(e.name,shortDate(e.date)+' · '+(status?.label??eventNames[e.status])+(status?.actual?' · план '+money(e.amount)+' · оплачено '+money(status.actual):''),
+              status?.actual?money(status.actual):e.amount?money(e.amount):'—',()=>eventEditor(e));
+          }):<Blank>В этом месяце нет событий.</Blank>}
           </section>
           <section className="card"><div className="section-head"><div><h2>Регулярные события</h2><p>Укажите даты для платежей и поступлений без расписания.</p></div>{add('rules','Правило')}</div>
-            {data.rules.map(r=>row(r.name,r.date?shortDate(r.date):'Нужно указать дату',money(ruleAmount(r)),()=>r.kind==='expense'?editPayment(r):edit('rules',scalarFields(r))))}
+            {data.rules.map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>r.kind==='expense'?editPayment(r):edit('rules',scalarFields(r))))}
           </section>
         </>}
         {section==='accounts'&&<>

@@ -1,11 +1,11 @@
-import {addDays,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,first,forecast,guaranteed,month,payDate,remainingEvent,reserved,score,sum,usedReserve,type Data,type Entry,type Event} from './finance.ts';
+import {addDays,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,first,forecast,guaranteed,month,payDate,remainingEvent,reserved,score,sum,uses,usedReserve,type Data,type Entry,type Event} from './finance.ts';
 
 export function cashflow(d:Data,start:string,horizon=90){
   const end=addDays(start,horizon-1);
   const events=calendar(d,month(start,-12),addDays(end,14));
   const byDate=new Map<string,Event[]>();
   for(const e of events){
-    if(e.status==='canceled'||e.status==='received'||(e.date<start&&(e.kind==='income'||e.kind==='notice')))continue;
+    if(e.status==='canceled'||e.status==='received'||e.status==='settled_before_tracking'||(e.date<start&&(e.kind==='income'||e.kind==='notice')))continue;
     const date=e.kind==='expense'&&!e.id.startsWith('purchase@')?payDate(d,e,start):e.date;
     const effective=date<start?start:date;
     if(effective>end)continue;
@@ -39,7 +39,7 @@ export function paymentState(d:Data,e:Event,date:string){
   const actual=sum(d.transactions.filter(t=>t.event===e.id).map(t=>t.amount));
   const remaining=remainingEvent(e,d.transactions);
   const held=Math.min(remaining,reserved(d,e.id));
-  const label=e.status==='canceled'?'Отменён':!remaining?'Оплачен':actual?(dueDate(e)<date?'Частично оплачен · остаток просрочен':'Частично оплачен'):dueDate(e)<date?'Просрочен':
+  const label=e.status==='canceled'?'Отменён':e.status==='settled_before_tracking'?'Оплачено до начала учёта':!remaining?'Оплачен':actual?(dueDate(e)<date?'Частично оплачен · остаток просрочен':'Частично оплачен'):dueDate(e)<date?'Просрочен':
     held>=remaining?'Полностью зарезервирован':held?'Частично зарезервирован':e.status==='moved'?'Перенесён':e.date<=date?'Не обеспечен деньгами':'Запланирован';
   return {actual,remaining,held,missing:remaining-held,label,recommended:payDate(d,e,date)};
 }
@@ -73,6 +73,22 @@ export function closePaidExpense(d:Data,event:Event,date:string):Data{
   return {...d,events:[...d.events.filter(e=>e.id!==event.id),completed],plans:trimPaymentReserves(d,completed)};
 }
 
+export function detachExpense(d:Data,entry:Entry):Data{
+  const old=d.transactions.find(t=>t.id===entry.id);
+  const event=d.events.find(e=>e.id===old?.event);
+  if(!old||!event||old.kind!=='expense')return d;
+  const targets=new Set(d.plans.flatMap(p=>p.items).filter(i=>i.target===event.id&&['bills','purchases'].includes(i.group)).map(i=>i.id));
+  const detached=uses(old).filter(link=>targets.has(link.id));
+  const preserved=uses(old).filter(link=>!targets.has(link.id));
+  const transactions=d.transactions.map(t=>t.id===entry.id?{...entry,event:'',reservation:'',reserveUses:preserved,finalPayment:false}:t);
+  const others=transactions.filter(t=>t.event===event.id);
+  const paid=sum(others.map(t=>t.amount));
+  const updated:Event={...event,status:event.status==='canceled'||event.status==='settled_before_tracking'?event.status:
+    paid>=event.amount||others.some(t=>t.finalPayment)?'received':paid?'partial':'planned'};
+  const plans=d.plans.map(p=>({...p,items:p.items.map(i=>({...i,amount:i.amount-(detached.find(link=>link.id===i.id)?.amount??0)}))}));
+  return {...d,transactions,plans:trimPaymentReserves({...d,transactions,plans},updated),events:d.events.map(e=>e.id===updated.id?updated:e)};
+}
+
 export function reminders(d:Data,date:string,clock='23:59'){
   const {needs,purchases,delayed,income}=billNeeds(d,date);
   const upcoming=calendar(d,addDays(date,-7),addDays(date,365));
@@ -82,7 +98,7 @@ export function reminders(d:Data,date:string,clock='23:59'){
     if(!state?.read&&(!state?.until||state.until<=date))items.push({id,title,detail,event});
   };
   for(const e of [...new Map([...upcoming,...needs.map(x=>x.event),...purchases.map(x=>x.event)].map(e=>[e.id,e])).values()]){
-    if(e.status==='received'||e.status==='canceled'||e.kind==='saving')continue;
+    if(e.status==='received'||e.status==='settled_before_tracking'||e.status==='canceled'||e.kind==='saving')continue;
     if(e.kind==='expense'){
       const p=paymentState(d,e,date), until=days(date,dueDate(e));
       const interval=[...(e.payment?.reminders??[7,3,1,0])].sort((a,b)=>a-b).find(n=>n>=until);

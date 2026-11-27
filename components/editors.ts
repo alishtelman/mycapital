@@ -3,7 +3,7 @@ import {today,type Data} from '../lib/finance';
 export type Entity='accounts'|'events'|'rules'|'categories'|'purchases'|'debts'|'goals'|'scenarios'|'bonuses';
 export const groupNames:Record<string,string>={bills:'Обязательные платежи',living:'Бюджет на жизнь',purchases:'Запланированные покупки',reserve:'Финансовая подушка',otbasy:'Отбасы',bcc:'Накопительные депозиты',debt:'Досрочное погашение',free:'Свободный остаток'};
 export const accountNames={cash:'Свободные деньги',otbasy:'Отбасы',bcc:'Накопительный депозит',reserve:'Резерв',market:'Рыночный актив'};
-export const eventNames={planned:'Запланировано',partial:'Частично',received:'Выполнено',moved:'Перенесено',canceled:'Отменено'};
+export const eventNames={planned:'Запланировано',partial:'Частично',received:'Выполнено',settled_before_tracking:'Оплачено до начала учёта',moved:'Перенесено',canceled:'Отменено'};
 export const titles:Record<Entity,string>={accounts:'Счёт',events:'Событие',rules:'Регулярный платёж или доход',categories:'Категория бюджета',purchases:'Покупка',debts:'Кредит или рассрочка',goals:'Финансовая цель',scenarios:'Сценарий',bonuses:'Госпремия'};
 export function editor(entity:Entity,d:Data,existing?:Record<string,Value>):{initial:Record<string,Value>;fields:Field[]}{
   const base={id:crypto.randomUUID(),name:''};

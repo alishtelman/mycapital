@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {allocation,calendar,cash,dailyBudget,days,effectiveDebt,empty,payDate,reserved,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Plan,type Rule} from '../lib/finance.ts';
-import {cashflow,closePaidExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
+import {cashflow,closePaidExpense,detachExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
 import {dataSchema} from '../lib/schema.ts';
 
 const start='2026-12-01';
@@ -160,4 +160,30 @@ test('фактический счёт ниже плана: закрытие сн
   assert.deepEqual(next.transactions,d.transactions);
   assert.equal(cash(next),cash(d));
   assert.ok(!reminders(next,date).some(n=>n.event?.id===event.id));
+});
+
+
+test('расход можно вернуть в фактический месяц без повторного списания',()=>{
+  const d=setup(9_000_000);
+  d.rules.push(makeRule({name:'Бензин',amount:5_000_000,date:'2026-12-01'}));
+  const event={...calendar(d,start,start).find(e=>e.kind==='expense')!,status:'partial' as const};
+  d.events=[event];
+  withReserves(d,event,[5_000_000]);
+  d.transactions=[withPaymentReserves(d,payment(event,3_344_000),event.id)];
+  const next=detachExpense(d,{...d.transactions[0],category:'fuel'});
+  assert.equal(next.transactions[0].event,'');
+  assert.equal(next.transactions[0].category,'fuel');
+  assert.equal(cash(next),cash(d));
+  assert.equal(reserved(next),reserved(d));
+  assert.equal(paymentState(next,next.events[0],start).remaining,5_000_000);
+});
+test('оплата до начала учёта не создаёт расход и оставляет следующий месяц открытым',()=>{
+  const d=setup(9_000_000);
+  d.rules.push(makeRule({date:'2026-11-15'}));
+  const event={...calendar(d,'2026-11-15',start).find(e=>e.kind==='expense')!,status:'settled_before_tracking' as const};
+  d.events=[event];
+  assert.equal(paymentState(d,event,start).remaining,0);
+  assert.equal(cash(d),9_000_000);
+  assert.ok(!reminders(d,start).some(n=>n.event?.id===event.id));
+  assert.ok(calendar(d,start,'2026-12-16').some(e=>e.rule===event.rule&&e.date==='2026-12-15'&&e.status==='planned'));
 });
