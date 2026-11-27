@@ -186,3 +186,23 @@ main{max-width:1180px;margin-inline:auto}
   .operation-sheet{width:100%;max-width:none;border-radius:16px 16px 0 0;padding-bottom:max(16px,env(safe-area-inset-bottom))}
   .operation-sheet .button{min-height:44px}
 }
+
+/* Keep interactive row chevrons in a consistent trailing column. */
+button.list-row > svg:last-child{flex:0 0 16px;width:16px;height:16px;opacity:.65}
+button.list-row:hover > svg:last-child,button.list-row:focus-visible > svg:last-child{opacity:1}
+button.list-row:focus-visible,.button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.dashboard-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.dashboard-goal.card{padding-inline:16px}
+.month-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.month-switcher{display:grid;grid-template-columns:44px auto 44px;align-items:center;gap:4px}
+.month-switcher h1{font-size:clamp(19px,3vw,28px);margin:0;text-align:center;text-transform:capitalize}
+.month-step.button{width:44px;height:44px;padding:0;justify-content:center;border-radius:10px}
+.month-screen details>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none;min-height:44px;padding-block:8px}
+.month-screen details>summary::-webkit-details-marker{display:none}
+.month-screen details>summary::after{content:'';flex:0 0 7px;width:7px;height:7px;margin-inline:5px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;opacity:.65;transform:rotate(45deg)}
+.month-screen details[open]>summary::after{transform:rotate(225deg)}
+.month-screen details>details{margin-left:10px}
+@media(max-width:570px){
+  .month-toolbar{gap:8px}
+  .dashboard-links>.button{min-height:44px}
+}

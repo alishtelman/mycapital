@@ -1,6 +1,6 @@
 'use client';
 import {useState} from 'react';
-import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowUpRight,ChevronRight,Landmark,ShieldCheck,ShoppingBag,Wallet} from 'lucide-react';
+import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowUpRight,ChevronLeft,ChevronRight,Landmark,ShieldCheck,ShoppingBag,Wallet} from 'lucide-react';
 import {balance,cash,downPayment,effectiveDebt,first,forecast,goalHoldings,guaranteed,money,month,nextIncome,remainingEvent,reserved,sum,type Data,type Event,calendar} from '../lib/finance';
 import {nextMonthPlan} from '../lib/month-plan';
 import {Button} from './ui/button';
@@ -41,11 +41,14 @@ export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,
     <section className="card">
       <div className="section-head"><h2>Следующее поступление</h2></div>
       {expected?<><div className="list-row"><span><b>{expected.name}</b><small>{shortDate(expected.date)} · ожидается</small></span><strong>{money(remainingEvent(expected,d.transactions))}</strong></div>
-        <Button variant="outline" onClick={()=>income(expected)}>Получил деньги</Button></>:<p>Поступления пока не запланированы.</p>}
-      <Button variant="ghost" onClick={()=>go('month')}>Открыть план месяца <ChevronRight size={16}/></Button>
+        </>:<p>Поступления пока не запланированы.</p>}
+      <div className="dashboard-links">
+        {expected&&<Button variant="outline" onClick={()=>income(expected)}>Получил деньги</Button>}
+        <Button variant="ghost" onClick={()=>go('month')}>Открыть план месяца <ChevronRight size={16} aria-hidden="true"/></Button>
+      </div>
     </section>
     <details className="card"><summary>Подробнее о сегодняшнем бюджете</summary>{moneyToday}</details>
-    <button className="card list-row" onClick={()=>go('goals')}><span><b>Моя квартира</b><small>{prediction?.reached?'По прогнозу · '+dayLabel(prediction.reached):'Открыть цель'}</small></span><strong>{target?Math.floor(100*(holdings?.total??0)/target)+'%':'—'}</strong><ChevronRight size={18}/></button>
+    <button className="card list-row dashboard-goal" onClick={()=>go('goals')}><span><b>Моя квартира</b><small>{prediction?.reached?'По прогнозу · '+dayLabel(prediction.reached):'Открыть цель'}</small></span><strong>{target?Math.floor(100*(holdings?.total??0)/target)+'%':'—'}</strong><ChevronRight size={16} aria-hidden="true"/></button>
   </>;
 }
 
@@ -59,16 +62,17 @@ export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,o
     <span><b>{row.name}</b><small>{row.date?shortDate(row.date):'Указать дату платежа'}</small>
       {row.held>0&&<small>Отложено {money(row.held)}</small>}
       {row.paid>0&&row.amount>0&&<small>Уже оплачено {money(row.paid)}</small>}</span>
-    <strong>{money(row.amount||row.paid)}</strong><ChevronRight size={16}/></button>;
+    <strong>{money(row.amount||row.paid)}</strong><ChevronRight size={16} aria-hidden="true"/></button>;
   return (
-    <section className="card">
-      <div className="section-head"><div><h1>{dayLabel(plan.period)}</h1></div>
-        {!!plan.savings.length&&<Button variant="outline" onClick={()=>editPlan(plan.period)}>{savedPlan?'Изменить план':'Сохранить свой план'}</Button>}
-      </div>
-      <div className="quick">
-        <Button variant="outline" aria-label="Предыдущий месяц" disabled={period<=first(date)} onClick={()=>changePeriod(month(period,-1))}>‹</Button>
-        <Button variant="outline" aria-label="Следующий месяц" onClick={()=>changePeriod(month(period,1))}>›</Button>
-      </div>
+    <section className="card month-screen">
+      <header className="month-toolbar">
+        <div className="month-switcher" role="group" aria-label="Период плана">
+          <Button variant="ghost" className="month-step" aria-label="Предыдущий месяц" disabled={period<=first(date)} onClick={()=>changePeriod(month(period,-1))}><ChevronLeft size={18} aria-hidden="true"/></Button>
+          <h1>{new Intl.DateTimeFormat('ru-KZ',{month:'long',year:'numeric',timeZone:'Asia/Almaty'}).format(new Date(period+'T12:00:00+05:00'))}</h1>
+          <Button variant="ghost" className="month-step" aria-label="Следующий месяц" onClick={()=>changePeriod(month(period,1))}><ChevronRight size={18} aria-hidden="true"/></Button>
+        </div>
+        {plan.savings.length>0&&<Button variant="outline" onClick={()=>editPlan(plan.period)}>{savedPlan?'Изменить план':'Сохранить свой план'}</Button>}
+      </header>
       <details><summary>Ожидаемые поступления · {money(plan.income)}</summary>
         {plan.incomeEvents.map(event=><div className="list-row" key={event.id}><span><b>{event.name}</b><small>{shortDate(event.date)}</small></span><strong>{money(remainingEvent(event,data.transactions))}</strong></div>)}
       </details>
@@ -90,7 +94,7 @@ export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,o
         {!prediction&&<p>Добавь цель, чтобы рассчитать пополнения.</p>}
       </details>}
       {plan.income<plan.paymentTotal+plan.life+leftToSave&&<p className="loss">Из ожидаемых доходов не хватает {money(plan.paymentTotal+plan.life+leftToSave-plan.income)}. Остаток на сегодня в эту сумму не заложен.</p>}
-      <div className="quick"><Button variant="outline" onClick={openPayments}>Календарь платежей</Button><Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
+      <div className="dashboard-links"><Button variant="outline" onClick={openPayments}>Календарь платежей</Button><Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
     </section>
   );
 }
