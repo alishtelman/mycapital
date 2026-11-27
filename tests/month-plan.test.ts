@@ -17,3 +17,16 @@ test('план следующего месяца включает ипотеку
   assert.equal(plan.obligations.length,2);
   assert.equal(plan.obligations.find(row=>row.id==='mortgage')?.date,'');
 });
+
+test('после уточнения даты долг виден один раз; оплаченный счёт сохраняет фактическую сумму',()=>{
+  const data=empty();
+  data.debts=[{id:'mortgage',name:'Ипотека',kind:'mortgage',balance:300_000,payment:20_000,date:'2026-12-10',rate:0,apr:0,original:300_000,confirmed:true}];
+  data.events=[{id:'utility',name:'Коммунальные услуги',kind:'expense',date:'2026-12-05',amount:30_000,status:'received',rule:'',comment:''}];
+  data.transactions=[{id:'actual',name:'Коммунальные услуги',kind:'expense',date:'2026-12-05',amount:23_000,from:'',to:'',event:'utility',category:'',reservation:'',sold:0}];
+  const plan=nextMonthPlan(data,'2026-11-28',null);
+  assert.equal(plan.obligations.length,1);
+  assert.equal(plan.obligations[0].source,'event');
+  assert.equal(plan.obligations[0].date,'2026-12-10');
+  assert.equal(plan.paymentTotal,20_000);
+  assert.equal(plan.paid[0].paid,23_000);
+});

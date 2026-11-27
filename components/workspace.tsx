@@ -522,6 +522,30 @@ export function Workspace(){
     const selected=data.scenarios.find(item=>item.id===scenario)??data.scenarios[0];
     return goal?forecast(data,goal,day,selected):null;
   },[data,day,scenario]);
+  function openMonthPayment(row:ReturnType<typeof nextMonthPlan>['obligations'][number],period:string){
+    if(row.source==='event'){
+      const event=calendar(data,period,month(period,1)).find(event=>event.id===row.id);
+      if(event)eventEditor(event);
+      return;
+    }
+    if(row.source==='rule'){
+      const rule=data.rules.find(rule=>rule.id===row.id);
+      if(!rule)return;
+      M({title:'Дата платежа · '+rule.name,fields:[f('date','Первая дата оплаты','date')],initial:{date:period},
+        actions:<p>Дата станет началом действующего расписания «{rule.name}».</p>,
+        submit:v=>void persist({...data,rules:setRow(data.rules,{...rule,date:String(v.date)})},'Дата платежа сохранена').then(ok=>{if(ok)M(null);})});
+      return;
+    }
+    const debt=data.debts.find(debt=>debt.id===row.id);
+    if(!debt)return;
+    M({title:'Следующий платёж · '+debt.name,fields:[f('date','Дата платежа','date'),f('payment','Платёж, ₸','money')],
+      initial:{date:debt.date||period,payment:debt.payment},actions:<p>Сверь сумму и дату с графиком банка.</p>,
+      submit:v=>{
+        const payment=Number(v.payment);
+        if(payment<=0||payment<=Math.round(effectiveDebt(debt,data).balance*debt.rate/1200)){N('Укажи платёж, который покрывает проценты и часть долга.');return;}
+        void persist({...data,debts:setRow(data.debts,{...debt,date:String(v.date),payment,confirmed:true})},'Дата и сумма платежа сохранены').then(ok=>{if(ok)M(null);});
+      }});
+  }
   function editNextMonthPlan(period:string){
     const plan=nextMonthPlan(data,day,currentForecast,period);
     const existing=data.settings.monthlySavingPlan?.[plan.period];
@@ -796,7 +820,7 @@ export function Workspace(){
         {section==='dashboard'&&session&&!workspace&&<section className="card"><p>Загружаем данные аккаунта.</p></section>}
         {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} updateBalance={updateStartingCash} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
         {section==='month'&&<MonthScreen data={data} date={day} period={planPeriod||month(first(day),1)} prediction={currentForecast} changePeriod={setPlanPeriod}
-          editPlan={editNextMonthPlan} openBudget={()=>go('budget')} openPayments={()=>{setPointer(planPeriod||month(first(day),1));go('calendar');}}
+          editPlan={editNextMonthPlan} openPayment={row=>openMonthPayment(row,planPeriod||month(first(day),1))} openBudget={()=>go('budget')} openPayments={()=>{setPointer(planPeriod||month(first(day),1));go('calendar');}}
           report={()=>{setReportPeriod(planPeriod||month(first(day),1));setShowReport(true);}}/>}
         {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('month')}>Вернуться к плану</Button>)}{reservesPanel}</>}
         {section==='budget'&&<>

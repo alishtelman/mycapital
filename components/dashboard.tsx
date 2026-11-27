@@ -49,11 +49,17 @@ export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,
   </>;
 }
 
-export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,openBudget,openPayments,report}:{data:Data;date:string;period:string;prediction:ReturnType<typeof forecast>|null;changePeriod:(period:string)=>void;editPlan:(period:string)=>void;openBudget:()=>void;openPayments:()=>void;report:()=>void}){
+export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,openBudget,openPayments,report,openPayment}:{data:Data;date:string;period:string;prediction:ReturnType<typeof forecast>|null;changePeriod:(period:string)=>void;editPlan:(period:string)=>void;openBudget:()=>void;openPayments:()=>void;report:()=>void;openPayment:(row:ReturnType<typeof nextMonthPlan>['obligations'][number])=>void}){
   const plan=nextMonthPlan(data,date,prediction,period);
   const savedPlan=data.settings.monthlySavingPlan?.[period];
   const savingTotal=sum(plan.savings.map(row=>savedPlan?.[row.id]??row.suggested));
   const leftToSave=sum(plan.savings.map(row=>Math.max(0,(savedPlan?.[row.id]??row.suggested)-row.transferred)));
+  const missingDates=plan.obligations.filter(row=>!row.date);
+  const renderPayment=(row:typeof plan.obligations[number])=><button type="button" className="list-row" key={row.id} onClick={()=>openPayment(row)}>
+    <span><b>{row.name}</b><small>{row.date?shortDate(row.date):'Указать дату платежа'}</small>
+      {row.held>0&&<small>Отложено {money(row.held)}</small>}
+      {row.paid>0&&row.amount>0&&<small>Уже оплачено {money(row.paid)}</small>}</span>
+    <strong>{money(row.amount||row.paid)}</strong><ChevronRight size={16}/></button>;
   return (
     <section className="card">
       <div className="section-head"><div><h1>{dayLabel(plan.period)}</h1></div>
@@ -63,13 +69,17 @@ export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,o
         <Button variant="outline" aria-label="Предыдущий месяц" disabled={period<=first(date)} onClick={()=>changePeriod(month(period,-1))}>‹</Button>
         <Button variant="outline" aria-label="Следующий месяц" onClick={()=>changePeriod(month(period,1))}>›</Button>
       </div>
-      <div className="list-row"><b>Ожидаемые поступления</b><strong>{money(plan.income)}</strong></div>
+      <details><summary>Ожидаемые поступления · {money(plan.income)}</summary>
+        {plan.incomeEvents.map(event=><div className="list-row" key={event.id}><span><b>{event.name}</b><small>{shortDate(event.date)}</small></span><strong>{money(remainingEvent(event,data.transactions))}</strong></div>)}
+      </details>
+      {missingDates.length>0&&<details open><summary>Уточнить даты · {missingDates.length}</summary>{missingDates.map(renderPayment)}</details>}
 
       <details open><summary>Платежи и покупки · {money(plan.paymentTotal)}</summary>
-      {plan.obligations.filter(row=>row.debt).map(row=><div className="list-row" key={row.id}><span><b>{row.name}</b><small>{row.date?shortDate(row.date):'Дата пока не указана'}</small></span><strong>{money(row.amount)}</strong></div>)}
-      {plan.obligations.some(row=>!row.debt)&&<details><summary>Другие платежи и покупки</summary>
-        {plan.obligations.filter(row=>!row.debt).map(row=><div className="list-row" key={row.id}><span><b>{row.name}</b><small>{row.date?shortDate(row.date):'Дата пока не указана'}</small></span><strong>{money(row.amount)}</strong></div>)}
-      </details>}
+        {plan.obligations.filter(row=>row.debt&&row.date).map(renderPayment)}
+        {plan.obligations.some(row=>!row.debt&&row.date)&&<details><summary>Другие платежи и покупки</summary>
+          {plan.obligations.filter(row=>!row.debt&&row.date).map(renderPayment)}
+        </details>}
+        {plan.paid.length>0&&<details><summary>Уже оплачено · {money(sum(plan.paid.map(row=>row.paid)))}</summary>{plan.paid.map(renderPayment)}</details>}
       </details>
       <details><summary>На жизнь · {money(plan.life)}</summary><Button variant="outline" onClick={openBudget}>Категории и резервы</Button></details>
       {!!plan.savings.length&&<details open><summary>{savedPlan?'Пополнения по твоему плану':'Предлагаемые пополнения'} · {money(savingTotal)}</summary>
