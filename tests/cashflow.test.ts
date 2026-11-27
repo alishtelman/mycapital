@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {allocation,calendar,cash,dailyBudget,days,effectiveDebt,empty,payDate,reserved,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Plan,type Rule} from '../lib/finance.ts';
 import {cashflow,closedPeriodAvailability,closePaidExpense,detachExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
 import {dataSchema} from '../lib/schema.ts';
+import {prepareReconciliation} from '../lib/reconciliation.ts';
+
 
 const start='2026-12-01';
 const demo=JSON.parse(readFileSync(new URL('../lib/demo.json',import.meta.url),'utf8')) as Data;
@@ -231,4 +233,31 @@ test('история неполного месяца учитывает бюдж
   assert.equal(cash(d),900_000);
   assert.equal(cashflow(d,'2026-12-01',1)[0].available,900_000);
   assert.match(validateEntry(d,{...salary,event:'scheduled-income'}),/Историческая/);
+});
+
+test('пакетная сверка сохраняет остатки и повторно пропускает уже внесённые операции',()=>{
+  const data=setup(500_000);
+  const cashAccount=data.accounts[0];
+  data.accounts.push({...cashAccount,id:'bcc',kind:'bcc',opening:100_000});
+  const income:Entry={id:'salary-record',name:'Зарплата',date:'2026-10-29',kind:'income',amount:300_000,from:'',to:cashAccount.id,category:'',event:'',reservation:'',sold:0};
+  const transfer:Entry={...income,id:'deposit-record',name:'Депозит',kind:'transfer',date:'2026-11-20',amount:100_000,from:cashAccount.id,to:'bcc'};
+  const reviewed=prepareReconciliation(data,'2026-11-01',[income,transfer]);
+  assert.equal(reviewed.added.length,2);
+  assert.equal(cash(reviewed.data),cash(data));
+  assert.equal(monthlyReport(reviewed.data,'2026-11-01').saved,100_000);
+  assert.equal(monthlyReport(reviewed.data,'2026-11-01').income,300_000);
+  const retry=prepareReconciliation(reviewed.data,'2026-11-01',[income,transfer]);
+  assert.equal(retry.existing.length,2);
+  assert.equal(retry.added.length,0);
+  assert.deepEqual(retry.data,reviewed.data);
+  assert.throws(()=>prepareReconciliation({...data,transactions:[income]},'2026-11-01',[income]),/другом бюджетном месяце/);
+});
+
+test('платёж нового месяца не попадает в закрытый месяц из-за рекомендации оплатить раньше',()=>{
+  const data=setup(500_000);
+  data.settings.closings={'2026-11-01':{date:'2026-11-27'}};
+  data.rules.push(makeRule({id:'subscription',date:'2026-12-01',amount:100_000}));
+  const rows=cashflow(data,'2026-11-27',5);
+  assert.equal(rows.find(row=>row.date==='2026-11-30')?.available,500_000);
+  assert.equal(rows.find(row=>row.date==='2026-12-01')?.expenses,100_000);
 });

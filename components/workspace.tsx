@@ -4,9 +4,10 @@ import dynamic from 'next/dynamic';
 import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
-import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,entryMonth,first,forecast,goalHoldings,livingReserve,releaseLiving,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
+import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,entryMonth,first,forecast,goalHoldings,goalPurpose,goalShare,livingReserve,releaseLiving,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
 import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
+import {prepareReconciliation} from '../lib/reconciliation';
 import {parseInstallments} from '../lib/installments';
 import {calendarGroups} from '../lib/workspace-view';
 import {dataSchema} from '../lib/schema';
@@ -65,6 +66,7 @@ function exportCalendar(d:Data,date:string){
 export function Workspace(){
   const [inbox,setInbox]=useState(false);
   const [showReport,setShowReport]=useState(false);
+  const [reportPeriod,setReportPeriod]=useState('');
   const [purchase,setPurchase]=useState<{id?:string;amount:number;date:string;name:string}|null>(null);
   const [clock,setClock]=useState('00:00');
   const writing=useRef(false);
@@ -307,6 +309,59 @@ export function Workspace(){
           budgetMonth:v.budgetMonth?first(String(v.budgetMonth)):undefined,category:'',event:event?.id??'',reservation:'',sold:0},event);
       }});
   }
+  function reconcileMonth(){
+    const cashAccounts=data.accounts.filter(a=>a.kind==='cash');
+    const deposits=data.accounts.filter(a=>a.kind==='bcc');
+    if(!cashAccounts.length||!deposits.length){N('Для сверки добавьте денежный счёт и депозит БЦК.');return;}
+    const titles={salary:'Зарплата',advance:'Аванс',deposit:'Пополнение БЦК'};
+    const kinds=['salary','advance','deposit'] as const;
+    M({title:'Сверка первого месяца',fields:[f('period','Бюджетный месяц (любая дата месяца)','date'),
+      s('cash','Денежный счёт',cashAccounts.map(a=>[a.id,a.name])),s('deposit','Депозит БЦК',deposits.map(a=>[a.id,a.name])),
+      ...kinds.flatMap(key=>[f(key+'Date',titles[key]+' · фактическая дата','date',true),f(key+'Amount',titles[key]+' · сумма, ₸','money',true)])],
+      initial:{period:first(day),cash:cashAccounts[0].id,deposit:deposits[0].id},
+      actions:<p>Заполните операции, которые уже включены в текущие остатки. Пропустите операции, по которым пока нет суммы и даты.</p>,
+      submit:v=>{
+        const period=first(String(v.period));
+        const drafts:Entry[]=[];
+        for(const key of kinds){
+          const date=String(v[key+'Date']??''), amount=Number(v[key+'Amount']);
+          if(!date&&!amount)continue;
+          if(!date||amount<=0){N('Укажите и дату, и сумму: '+titles[key]+'.');return;}
+          drafts.push({id:crypto.randomUUID(),name:titles[key],kind:key==='deposit'?'transfer':'income',date,amount,
+            from:key==='deposit'?String(v.cash):'',to:key==='deposit'?String(v.deposit):String(v.cash),category:'',event:'',reservation:'',sold:0});
+        }
+        if(!drafts.length){N('Добавьте хотя бы одну операцию.');return;}
+        try{
+          const review=prepareReconciliation(data,period,drafts);
+          const involved=new Set(drafts.flatMap(entry=>[entry.from,entry.to]));
+          const balances=data.accounts.filter(a=>involved.has(a.id));
+
+          M({title:'Подтвердить сверку · '+dayLabel(period),fields:[f('confirm','Все указанные операции уже учтены в текущих остатках','boolean')],
+            initial:{confirm:false},actions:<div>
+              {review.added.map(entry=><p key={entry.id}>{shortDate(entry.date)} · {entry.name} · {money(entry.amount)}</p>)}
+              {review.existing.length>0&&<p>Уже есть в истории: {review.existing.map(entry=>entry.name).join(', ')}.</p>}
+              {balances.map(account=><p key={account.id}>{account.name} · текущий остаток {money(balance(account,data.transactions))}
+                {account.balanceDate?' · начальный баланс на '+shortDate(account.balanceDate):''}</p>)}
+              <p>Месяц будет помечен как неполный. Остатки счетов не изменятся.</p>
+            </div>,submit:answer=>{
+              if(!answer.confirm){N('Подтвердите, что суммы уже учтены.');return;}
+              void persist(review.data,'Сверка сохранена').then(ok=>{if(ok){M(null);setReportPeriod(period);setShowReport(true);}});
+            }});
+        }catch(error){N(error instanceof Error?error.message:'Проверьте операции.');}
+      }});
+  }
+  function configureGoalAccount(account:Account){
+    M({title:'Доля в цели · '+account.name,fields:[f('share','Доля средств в цели, %','number'),
+      s('purpose','Назначение',[['down','Первоначальный взнос'],['cushion','Финансовая подушка']])],
+      initial:{share:goalShare(account),purpose:goalPurpose(account)},
+      actions:<p>Укажите 0%, чтобы исключить счёт. Рыночные активы станут доступны для взноса или подушки после продажи.</p>,
+      submit:v=>{
+        const share=Number(v.share);
+        if(share<0||share>100){N('Укажите долю от 0 до 100%.');return;}
+        const goalPurpose=v.purpose==='cushion'?'cushion':'down';
+        void persist({...data,accounts:setRow(data.accounts,{...account,goalIncluded:share>0,goalShare:share,goalPurpose})},'Назначение обновлено').then(ok=>{if(ok)M(null);});
+      }});
+  }
   function recordHistory(existing?:Entry){
     const accounts=data.accounts.filter(a=>a.kind!=='market');
     const options=accounts.map(a=>[a.id,a.name] as [string,string]);
@@ -412,6 +467,7 @@ export function Workspace(){
         if(v.carry&&!v.partial)monthly[nextMonth]=Object.fromEntries(data.categories.map(c=>[c.id,categoryBudget(data,c,nextMonth)+(report.surplus.find(x=>x.id===c.id)?.amount??0)]));
         void persist({...next,settings:{...next.settings,closings,partialMonths,monthly}},'Месяц закрыт').then(ok=>{if(ok)M(null);});
       }});
+    setReportPeriod('');
     setShowReport(false);
   }
   function reopenMonth(period:string){
@@ -430,6 +486,7 @@ export function Workspace(){
         if(snapshot.carried)monthly[nextPeriod]=budget;
         void persist({...data,settings:{...data.settings,closings,monthly}},'Месяц открыт').then(ok=>{if(ok)M(null);});
       }});
+    setReportPeriod('');
     setShowReport(false);
   }
   function updateRoadmap(id:string,title:string,date:string,done:boolean){
@@ -814,7 +871,7 @@ export function Workspace(){
                 {data.settings.plannedSales?.filter(sale=>sale.account===a.id&&!data.transactions.some(t=>t.plannedSale===sale.id)).map(sale=>
                   <Button key={sale.id} variant="outline" onClick={()=>operation('sale',undefined,undefined,undefined,{from:a.id,name:'Продажа · '+a.name,sold:sale.value,amount:sale.proceeds,plannedSale:sale.id})}>Подтвердить продажу · {shortDate(sale.date)}</Button>)}
               </div>}
-              <div className="quick"><Button variant="outline" onClick={()=>edit('accounts',a)}>Изменить</Button><Button variant="ghost" onClick={()=>valuation(a)}>{a.kind==='market'?'Переоценка':'Сверить баланс'}</Button><Button variant="ghost" onClick={()=>{setAccountHistory(a.id);go('history');}}>Операции</Button></div>
+              <div className="quick"><Button variant="outline" onClick={()=>configureGoalAccount(a)}>Доля в цели · {goalShare(a)}%</Button><Button variant="outline" onClick={()=>edit('accounts',a)}>Изменить</Button><Button variant="ghost" onClick={()=>valuation(a)}>{a.kind==='market'?'Переоценка':'Сверить баланс'}</Button><Button variant="ghost" onClick={()=>{setAccountHistory(a.id);go('history');}}>Операции</Button></div>
             </details>;
           })}</div>
           {!data.accounts.length&&<Blank>Добавьте счёт или загрузите начальный профиль в настройках.</Blank>}
@@ -880,7 +937,7 @@ export function Workspace(){
         </>}
         {section==='history'&&<>
           {heading('История операций','Фактические поступления, платежи, переводы и переоценка.',<Button onClick={()=>operation('income')}><Plus size={18}/> Получил деньги</Button>)}
-          <div className="quick"><Button variant="outline" onClick={()=>recordHistory()}>Добавить историческую запись</Button>{types.filter(([k])=>k==='expense'||k==='transfer'||k==='sale').map(([k,label])=><Button key={k} variant="outline" onClick={()=>operation(k)}>{label}</Button>)}</div>
+          <div className="quick"><Button variant="outline" onClick={reconcileMonth}>Сверить первый месяц</Button><Button variant="outline" onClick={()=>recordHistory()}>Добавить историческую запись</Button>{types.filter(([k])=>k==='expense'||k==='transfer'||k==='sale').map(([k,label])=><Button key={k} variant="outline" onClick={()=>operation(k)}>{label}</Button>)}</div>
           <section className="card"><div className="section-head"><h2>Операции</h2><select aria-label="Фильтр по счёту" value={accountHistory} onChange={e=>setAccountHistory(e.target.value)}>
             <option value="">Все счета</option>{data.accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
           {!data.transactions.some(t=>!accountHistory||t.from===accountHistory||t.to===accountHistory)&&<Blank>Подтверждённых операций пока нет.</Blank>}{data.transactions.filter(t=>!accountHistory||t.from===accountHistory||t.to===accountHistory).sort((a,b)=>b.date.localeCompare(a.date)).map(t=><div key={t.id} className="transaction-row">
@@ -940,7 +997,7 @@ export function Workspace(){
     <nav className="bottom-nav" aria-label="Основное меню">{nav.slice(0,4).map(([id,label,Icon])=><button key={id} className={section===id?'active':''} onClick={()=>go(id)}><Icon size={21}/>{label}</button>)}<button className={section==='more'||nav.slice(4).some(([id])=>id===section)?'active':''} onClick={()=>go('more')}><Menu size={21}/>Ещё</button></nav>
     {notice&&<div className="toast" role="status"><span>{notice}</span><button aria-label="Скрыть уведомление" onClick={()=>N('')}>×</button></div>}
     {inbox&&!modal&&<Notifications data={data} date={day} clock={clock} close={()=>setInbox(false)} open={eventEditor} busy={busy} mark={(id,snooze)=>void persist({...data,settings:{...data.settings,notifications:{...data.settings.notifications,[id]:snooze?{until:addDays(day,1)}:{read:true}}}},snooze?'Напоминание отложено':'Уведомление прочитано')}/>}
-    {showReport&&!modal&&<MonthReport data={data} day={day} close={()=>setShowReport(false)} closeMonth={closeMonth} reopen={reopenMonth}/>}
+    {showReport&&!modal&&<MonthReport data={data} day={day} initialPeriod={reportPeriod} close={()=>{setReportPeriod('');setShowReport(false);}} closeMonth={closeMonth} reopen={reopenMonth}/>}
     {purchase&&!modal&&<PurchaseCheck data={data} date={day} request={purchase} busy={busy} close={()=>setPurchase(null)} apply={next=>{
       const id=purchase.id??'assessment';
       const row=next.purchases.find(p=>p.id===id);

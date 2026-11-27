@@ -7,8 +7,10 @@ export function cashflow(d:Data,start:string,horizon=90){
   for(const e of events){
     if(((e.kind==='expense'||e.kind==='income')&&remainingEvent(e,d.transactions)===0)||
       e.status==='canceled'||e.status==='received'||e.status==='settled_before_tracking'||(e.date<start&&(e.kind==='income'||e.kind==='notice')))continue;
-    const date=e.kind==='expense'&&!e.id.startsWith('purchase@')?payDate(d,e,start):e.date;
-    const effective=date<start?start:date;
+    const recommended=e.kind==='expense'&&!e.id.startsWith('purchase@')?payDate(d,e,start):e.date;
+    const period=first(e.date);
+    const scheduled=recommended<period&&d.settings.closings?.[first(recommended)]?period:recommended;
+    const effective=scheduled<start?start:scheduled;
     if(effective>end)continue;
     byDate.set(effective,[...(byDate.get(effective)??[]),e]);
   }

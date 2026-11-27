@@ -1,4 +1,4 @@
-export type Account = {id:string; name:string; kind:'cash'|'otbasy'|'bcc'|'reserve'|'market'; owner:string; opening:number; rate:number; basis:number; maturity:string; contract:number; futureContract:number; score:number; interest:number; eligible:number; awarded:number; fee:number; earlyRate:number; opened:string; rollover:boolean; balanceDate?:string; liquidity?:'liquid'|'term'; nominal?:number; termMonths?:number; goalIncluded?:boolean};
+export type Account = {id:string; name:string; kind:'cash'|'otbasy'|'bcc'|'reserve'|'market'; owner:string; opening:number; rate:number; basis:number; maturity:string; contract:number; futureContract:number; score:number; interest:number; eligible:number; awarded:number; fee:number; earlyRate:number; opened:string; rollover:boolean; balanceDate?:string; liquidity?:'liquid'|'term'; nominal?:number; termMonths?:number; goalIncluded?:boolean; goalShare?:number; goalPurpose?:'down'|'cushion'};
 export type Entry = {id:string; date:string; name:string; kind:'income'|'expense'|'transfer'|'sale'|'valuation'; amount:number; from:string; to:string; category:string; event:string; reservation:string; sold:number; plannedSale?:string; budgetMonth?:string; openingBalanceIncluded?:boolean; reducePayment?:boolean; finalPayment?:boolean; reserveUses?:{id:string;amount:number}[]; comment?:string};
 export type Event = {id:string; name:string; date:string; kind:'income'|'expense'|'saving'|'notice'; amount:number; status:'planned'|'partial'|'received'|'settled_before_tracking'|'moved'|'canceled'; rule:string; comment:string; deadline?:string; payment?:Payment};
 export type Payment = {category?:string; minimum?:number; maximum?:number; account?:string; priority?:number; partial?:boolean; early?:boolean; automatic?:boolean; reminders?:number[]; comment?:string; grace?:number; discount?:number};
@@ -38,12 +38,19 @@ export const availableForGoal = (a:Account,date:string) => a.goalIncluded!==fals
 export const entryMonth = (entry:Entry) => entry.budgetMonth??first(entry.date);
 export const balance = (a:Account,entries:Entry[]) => a.opening+sum(entries.filter(e=>!e.openingBalanceIncluded).map(e=>
   (e.to===a.id?e.amount:0)-(e.from===a.id?(e.kind==='sale'?e.sold:e.amount):0)));
+export function goalShare(account:Account){
+  if(account.goalIncluded===false)return 0;
+  return account.goalShare??(account.kind==='cash'?0:account.kind==='market'&&account.goalIncluded!==true?0:100);
+}
+export const goalPurpose = (account:Account) => account.goalPurpose??(account.kind==='reserve'?'cushion':'down');
+export const goalValue = (account:Account,entries:Entry[]) => Math.round(balance(account,entries)*goalShare(account)/100);
 export function goalHoldings(d:Data,goal:Goal){
-  const eligible=d.accounts.filter(a=>a.kind==='market'?a.goalIncluded===true:a.kind!=='cash'&&a.goalIncluded!==false);
-  const value=(kind:Account['kind'])=>sum(eligible.filter(a=>a.kind===kind).map(a=>balance(a,d.transactions)));
-  const otbasy=value('otbasy'), bcc=value('bcc'), market=value('market'), cushion=value('reserve');
-  const accessibleBcc=sum(eligible.filter(a=>a.kind==='bcc'&&availableForGoal(a,goal.date)).map(a=>balance(a,d.transactions)));
-  return {otbasy,bcc,market,cushion,total:otbasy+bcc+market+cushion,downPaymentFunds:otbasy+accessibleBcc};
+  const value=(kind:Account['kind'])=>sum(d.accounts.filter(a=>a.kind===kind).map(a=>goalValue(a,d.transactions)));
+  const otbasy=value('otbasy'), bcc=value('bcc'), market=value('market'), cashForGoal=value('cash');
+  const liquidByPurpose=(purpose:NonNullable<Account['goalPurpose']>)=>sum(d.accounts.filter(a=>
+    goalPurpose(a)===purpose&&a.kind!=='market'&&(a.kind!=='bcc'||availableForGoal(a,goal.date))).map(a=>goalValue(a,d.transactions)));
+  const cushion=liquidByPurpose('cushion');
+  return {otbasy,bcc,market,cushion,total:otbasy+bcc+market+cashForGoal+value('reserve'),downPaymentFunds:liquidByPurpose('down')};
 }
 export const uses = (entry:Entry) => entry.reserveUses??(entry.reservation?[{id:entry.reservation,amount:entry.amount}]:[]);
 export const usedReserve = (entries:Entry[],id:string) => sum(entries.flatMap(uses).filter(x=>x.id===id).map(x=>x.amount));
@@ -281,7 +288,7 @@ export function allocation(d:Data,date:string,choice?:Scenario):Item[]{
       if(a) add(group,a.id,a.name,Math.max(0,goal.reserve-balance(a,d.transactions))*Math.min(1,days(date,next)/Math.max(1,days(date,goal.date))),'Пополнение подушки в темпе цели');
     }
     if(group==='otbasy'&&goal){
-      const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&a.goalIncluded!==false);
+      const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&goalShare(a)>0&&goalPurpose(a)==='down');
       const horizon=Math.max(0,days(date,goal.date));
       const contract=Math.max(...accounts.map(a=>a.futureContract||a.contract),0);
       const base=sum(accounts.map(a=>(a.interest||a.score*a.contract/1000)+depositYield(balance(a,d.transactions),a.rate,horizon)));
@@ -314,15 +321,21 @@ export function allocation(d:Data,date:string,choice?:Scenario):Item[]{
 }
 
 export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
-  const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&a.goalIncluded!==false);
+  const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&goalShare(a)>0&&goalPurpose(a)==='down');
   const contract=Math.max(0,...accounts.map(a=>a.futureContract||a.contract));
-  let otbasy=sum(accounts.map(a=>balance(a,d.transactions)));
+  let otbasy=sum(accounts.map(a=>goalValue(a,d.transactions)));
+  // The bank's actual score is tied to the contract, independent of the amount earmarked in MyCapital.
   let interest=sum(accounts.map(a=>a.interest||a.score*a.contract/1000));
-  let reserves=sum(d.accounts.filter(a=>a.kind==='reserve'&&a.goalIncluded!==false).map(a=>balance(a,d.transactions)));
-  const bccAccounts=d.accounts.filter(a=>a.kind==='bcc'&&a.goalIncluded!==false);
-  let bcc=sum(bccAccounts.map(a=>balance(a,d.transactions)));
+  const cushionAccounts=d.accounts.filter(a=>goalPurpose(a)==='cushion'&&(a.kind==='cash'||availableForGoal(a,goal.date)));
+  let reserves=sum(cushionAccounts.map(a=>goalValue(a,d.transactions)));
+  const bccAccounts=d.accounts.filter(a=>a.kind==='bcc'&&goalShare(a)>0&&goalPurpose(a)==='down');
+  let bcc=sum(bccAccounts.map(a=>goalValue(a,d.transactions)));
   const otRate=(Math.max(0,...accounts.map(a=>a.rate)))*(s?.rates??100)/100;
-  let liquid=cash(d);
+  const earmarkedCash=sum(cushionAccounts.filter(a=>a.kind==='cash').map(a=>goalValue(a,d.transactions)));
+  const otherDownPayment=sum(d.accounts.filter(a=>a.kind==='reserve'&&goalPurpose(a)==='down').map(a=>goalValue(a,d.transactions)));
+  let liquid=cash(d)-earmarkedCash+otherDownPayment;
+  const goalExcluded=sum(d.accounts.filter(a=>a.kind!=='cash'&&a.kind!=='market').map(a=>balance(a,d.transactions)))
+    -otbasy-bcc-(reserves-earmarkedCash)-otherDownPayment;
   const marketBalances=new Map(d.accounts.filter(a=>a.kind==='market').map(a=>[a.id,balance(a,d.transactions)]));
   const marketFactor=(s?.market??100)/100;
   const sales=(d.settings.plannedSales??[]).filter(sale=>sale.date>=start&&!d.transactions.some(t=>t.kind==='sale'&&t.plannedSale===sale.id))
@@ -332,8 +345,8 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
   const events=calendar(d,month(start,-12),end).filter(e=>!e.id.startsWith('credited@')&&(e.date>=start||e.kind==='expense'));
   const due=events.map(e=>({...e,date:e.kind==='expense'&&e.date<start?start:e.kind==='income'&&d.rules.some(r=>r.id===e.rule&&r.repeat==='quarterly')?addDays(e.date,s?.bonusDelay??0):e.date}));
   const checkpoints=[goal.date,goal.latest].filter(date=>date>=start&&date<end).map(date=>addDays(date,1)).sort();
-  const otBalances=new Map(accounts.map(a=>[a.id,balance(a,d.transactions)]));
-  const bccBalances=new Map(bccAccounts.map(a=>[a.id,balance(a,d.transactions)]));
+  const otBalances=new Map(accounts.map(a=>[a.id,goalValue(a,d.transactions)]));
+  const bccBalances=new Map(bccAccounts.map(a=>[a.id,goalValue(a,d.transactions)]));
   const otChoice=[...accounts].sort((a,b)=>b.rate-a.rate)[0];
   const bccChoice=[...bccAccounts].filter(a=>availableForGoal(a,goal.date)).sort((a,b)=>b.rate-a.rate)[0];
   const rateFactor=(s?.rates??100)/100;
@@ -430,7 +443,7 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     const otbasyAtDeal=otbasy+transferable;
     const deficit=Math.max(0,down-availableDown)+Math.max(0,goal.reserve-reserves);
     if(!reached&&deficit===0&&op>=goal.score&&otbasyAtDeal>=down&&accounts.length&&contract>0) reached=boundary;
-    rows.push({date:boundary,income,expenses,otbasy,bcc,reserves,op,deficit,interest:cumulativeInterest,bonus:cumulativeBonus,capital:otbasy+bcc+reserves+market+liquid,
+    rows.push({date:boundary,income,expenses,otbasy,bcc,reserves,op,deficit,interest:cumulativeInterest,bonus:cumulativeBonus,capital:otbasy+bcc+reserves+market+liquid+goalExcluded,
       savings:otbasy+Math.max(0,bcc-locked)+reserves+liquid,target:down+goal.reserve,liquid,debt:sum(d.debts.map(loan=>schedule(effectiveDebt(loan,d)).filter(p=>p.date<until).at(-1)?.remaining??effectiveDebt(loan,d).balance))});
     date=until;
   }

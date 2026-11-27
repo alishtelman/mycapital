@@ -67,8 +67,8 @@ export function PurchaseCheck({data,date,request,close,apply,busy}:{data:Data;da
   </section></div>;
 }
 
-export function MonthReport({data,day,closeMonth,reopen,close}:{data:Data;day:string;closeMonth:(date:string)=>void;reopen:(date:string)=>void;close:()=>void}){
-  const [period,P]=useState(first(day));
+export function MonthReport({data,day,initialPeriod,closeMonth,reopen,close}:{data:Data;day:string;initialPeriod:string;closeMonth:(date:string)=>void;reopen:(date:string)=>void;close:()=>void}){
+  const [period,P]=useState(initialPeriod||first(day));
   const report=monthlyReport(data,period);
   return <div className="overlay" onClick={close}><section className="dialog" role="dialog" aria-modal="true" aria-label="Отчёт за месяц" onClick={e=>e.stopPropagation()}>
     <div className="dialog-header"><h2>Отчёт за месяц</h2><Button variant="ghost" onClick={close}>Закрыть</Button></div>

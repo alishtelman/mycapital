@@ -218,3 +218,17 @@ test('запланированная продажа переносит капи�
   assert.equal(forecast(d,goal,date,scenario).rows[0].capital,planned.capital);
   assert.match(validateEntry(d,{...actual,id:'duplicate'}),/уже подтверждена/);
 });
+
+test('доля счёта и назначение разделяют взнос и подушку без изменения баланса',()=>{
+  const d=sample(), goal=d.goals[0], account=d.accounts[0];
+  d.accounts=[
+    {...account,id:'otbasy',kind:'otbasy',opening:200_000,goalIncluded:true,goalShare:50,goalPurpose:'down'},
+    {...account,id:'bcc',kind:'bcc',opening:100_000,goalIncluded:true,goalShare:25,goalPurpose:'cushion',liquidity:'liquid',maturity:''},
+    {...account,id:'market',kind:'market',opening:100_000,goalIncluded:true,goalShare:30,goalPurpose:'cushion'},
+  ];
+  const result=goalHoldings(d,goal);
+  assert.equal(result.total,155_000);
+  assert.equal(result.downPaymentFunds,100_000);
+  assert.equal(result.cushion,25_000);
+  assert.equal(sum(d.accounts.map(a=>balance(a,d.transactions))),400_000);
+});
