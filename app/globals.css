@@ -206,3 +206,16 @@ button.list-row:focus-visible,.button:focus-visible{outline:2px solid var(--gree
   .month-toolbar{gap:8px}
   .dashboard-links>.button{min-height:44px}
 }
+
+.home-insights{align-items:stretch}
+.insight-track{display:flex;height:9px;margin:12px 0;border-radius:999px;overflow:hidden;background:var(--soft)}
+.insight-track>span{height:100%;flex-shrink:0}
+.insight-bills{background:#507f99}
+.insight-living{background:#b6894c}
+.insight-saving{background:#478763}
+.insight-left{background:#aeb9b4}
+.insight-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.card .insight-legend{display:grid;gap:6px;margin:10px 0}
+.insight-legend>div{display:flex;justify-content:space-between;gap:8px}
+.insight-legend dt{display:flex;align-items:center;gap:7px}
+.insight-legend dd{font-variant-numeric:tabular-nums}

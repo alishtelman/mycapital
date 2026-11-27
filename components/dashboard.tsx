@@ -19,6 +19,19 @@ export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,
   const debts=sum(d.debts.map(debt=>effectiveDebt(debt,d).balance));
   const holdings=goal?goalHoldings(d,goal):null;
   const target=goal?downPayment(goal)+goal.reserve:0;
+  const nextPlan=nextMonthPlan(d,date,prediction);
+  const savedPlan=d.settings.monthlySavingPlan?.[nextPlan.period];
+  const deposits=sum(nextPlan.savings.map(row=>Math.max(0,(savedPlan?.[row.id]??row.suggested)-row.transferred)));
+  const plannedTotal=nextPlan.paymentTotal+nextPlan.life+deposits;
+  const parts=[
+    {name:'Платежи и покупки',amount:nextPlan.paymentTotal,color:'bills'},
+    {name:'На жизнь',amount:nextPlan.life,color:'living'},
+    {name:'Пополнения',amount:deposits,color:'saving'},
+    {name:'Остаток по плану',amount:Math.max(0,nextPlan.income-plannedTotal),color:'left'},
+  ];
+  const scale=Math.max(nextPlan.income,plannedTotal);
+  const gathered=holdings?.total??0;
+  const progress=target>0?Math.max(0,Math.min(100,gathered/target*100)):0;
   return <>
     <div className="page-heading"><div><p className="eyebrow">{dayLabel(date)}</p><h1>Главная</h1></div></div>
     <section className="card capital-summary">
@@ -48,7 +61,23 @@ export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,
       </div>
     </section>
     <details className="card"><summary>Подробнее о сегодняшнем бюджете</summary>{moneyToday}</details>
-    <button className="card list-row dashboard-goal" onClick={()=>go('goals')}><span><b>Моя квартира</b><small>{prediction?.reached?'По прогнозу · '+dayLabel(prediction.reached):'Открыть цель'}</small></span><strong>{target?Math.floor(100*(holdings?.total??0)/target)+'%':'—'}</strong><ChevronRight size={16} aria-hidden="true"/></button>
+    <div className="split home-insights">
+      {scale>0&&<section className="card"><div className="section-head"><div><h2>Бюджет месяца</h2><p>План · {dayLabel(nextPlan.period)}</p></div></div>
+        <div className="insight-track" aria-hidden="true">{parts.filter(part=>part.amount>0).map(part=>
+          <span key={part.color} className={'insight-'+part.color} style={{width:part.amount/scale*100+'%'}}/>)}</div>
+        <dl className="insight-legend">{parts.filter(part=>part.amount>0).map(part=><div key={part.color}>
+          <dt><span className={'insight-dot insight-'+part.color} aria-hidden="true"/>{part.name}</dt><dd>{money(part.amount)}</dd>
+        </div>)}</dl>
+        <p className={plannedTotal>nextPlan.income?'loss':undefined}>Ожидается {money(nextPlan.income)}{plannedTotal>nextPlan.income?' · не хватает '+money(plannedTotal-nextPlan.income):''}</p>
+      </section>}
+      <section className="card"><div className="section-head"><h2>Моя квартира</h2>{target>0&&<strong>{progress.toLocaleString('ru-KZ',{maximumFractionDigits:1})}%</strong>}</div>
+        {target>0?<><strong className="large">{money(gathered)}</strong><p>из {money(target)}</p>
+          <div className="insight-track" role="progressbar" aria-label="Прогресс к покупке квартиры" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><span className="insight-saving" style={{width:progress+'%'}}/></div>
+          <p>{prediction?.reached?'По прогнозу · '+dayLabel(prediction.reached):'Дата покупки пока не определена'}</p>
+        </>:<p>Добавь цель, чтобы видеть прогресс.</p>}
+        <Button variant="ghost" onClick={()=>go('goals')}>Открыть цель <ChevronRight size={16} aria-hidden="true"/></Button>
+      </section>
+    </div>
   </>;
 }
 
