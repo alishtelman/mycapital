@@ -24,7 +24,7 @@ export function nextMonthPlan(data:Data,date:string,prediction:ReturnType<typeof
   let remaining=Math.max(0,income-paymentTotal-life);
   const savings=data.accounts.filter(account=>account.kind==='otbasy'||account.kind==='bcc').map(account=>{
     const projected=sum((prediction?.deposits??[]).filter(row=>row.account===account.id&&first(row.date)===period).map(row=>row.amount));
-    const suggested=Math.min(remaining,projected);
+    const suggested=prediction?.managed?projected:Math.min(remaining,projected);
     remaining-=suggested;
     const transferred=depositTransfers(data,account.id,period);
     return {id:account.id,name:account.name,suggested:suggested+transferred,transferred};

@@ -1,7 +1,7 @@
 import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {dataSchema} from '../../../lib/schema';
-import {balance,cash,reserved,sum,today,uses,validateEntry} from '../../../lib/finance';
+import {availableEnvelope,balance,cash,entryMonth,livingFundingError,reserved,sum,today,uses,validateEntry} from '../../../lib/finance';
 
 const headers={'Cache-Control':'no-store'};
 const response=(error:string,status:number)=>Response.json({error},{status,headers});
@@ -25,6 +25,8 @@ export async function PUT(request:Request){
   const access=await db.userDb.rpc('can_access_workspace',{target:id,write_access:true});
   if(access.error||access.data!==true)return response('Недостаточно прав для записи.',403);
   if(data.accounts.some(a=>balance(a,data.transactions)<0)||cash(data)<reserved(data))return response('Средства на счетах или в резервах не сходятся.',422);
+  const walletError=livingFundingError(data);
+  if(walletError)return response(walletError,422);
   const items=data.plans.flatMap(p=>p.items);
   const byItem=new Map(items.map(i=>[i.id,i]));
   const spent=new Map<string,number>();
@@ -44,7 +46,7 @@ export async function PUT(request:Request){
       return response('Проверьте сумму списания из резервов.',422);
     for(const link of links){
       const item=byItem.get(link.id);
-      if(!item)return response('Не найден связанный резерв.',422);
+      if(!item||!availableEnvelope(item,entryMonth(entry)))return response('Связанный резерв недоступен в этом месяце.',422);
       const used=(spent.get(item.id)??0)+link.amount;
       if(used>item.amount)return response('Превышен остаток резерва.',422);
       if(['otbasy','bcc','reserve'].includes(item.group)&&(entry.kind!=='transfer'||entry.to!==item.target))

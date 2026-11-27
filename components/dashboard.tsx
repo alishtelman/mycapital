@@ -1,129 +1,112 @@
 'use client';
-import {useState} from 'react';
+import {Amount,Disclosure,FinancialRow,PaymentRow,Progress,SectionHeading} from './ui/finance';
 import {Activity,ArrowDownLeft,ArrowLeftRight,ArrowUpRight,ChevronLeft,ChevronRight,Landmark,ShieldCheck,ShoppingBag,Wallet} from 'lucide-react';
-import {balance,cash,downPayment,effectiveDebt,first,forecast,goalHoldings,guaranteed,money,month,nextIncome,remainingEvent,reserved,sum,type Data,type Event,calendar} from '../lib/finance';
+import {addDays,balance,calendar,dailyBudget,depositTransfers,downPayment,dueDate,entryMonth,first,forecast,goalHoldings,livingReserve,money,month,remainingEvent,sum,type Data,type Event} from '../lib/finance';
+import {safeEnvelopeSpending} from '../lib/envelopes';
 import {nextMonthPlan} from '../lib/month-plan';
 import {Button} from './ui/button';
 export const shortDate=(date:string)=>date?new Date(date+'T12:00:00+05:00').toLocaleDateString('ru-KZ',{day:'numeric',month:'long',timeZone:'Asia/Almaty'}):'Дата не задана';
 export const dayLabel=(date:string)=>date?new Date(date+'T12:00:00+05:00').toLocaleDateString('ru-KZ',{month:'short',year:'numeric',timeZone:'Asia/Almaty'}):'—';
 export const kinds={cash:Wallet,reserve:ShieldCheck,otbasy:Landmark,bcc:Landmark,market:Activity};
 
-export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,purchase,prediction,moneyToday}:{data:Data;date:string;go:(page:string)=>void;updateBalance:()=>void;income:(event?:Event)=>void;expense:()=>void;transfer:()=>void;purchase:()=>void;prediction:ReturnType<typeof forecast>|null;moneyToday:React.ReactNode}){
-  const [operations,setOperations]=useState(false);
+function savingsRows(data:Data,prediction:ReturnType<typeof forecast>|null,period:string,standard:ReturnType<typeof nextMonthPlan>['savings']){
+  const saved=data.settings.monthlySavingPlan?.[period];
+  const cushionRows=(prediction?.deposits??[]).filter(row=>first(row.date)===period&&!standard.some(account=>account.id===row.account));
+  const cushions=[...Map.groupBy(cushionRows,row=>row.account)].map(([account,rows])=>{
+    const transferred=account?depositTransfers(data,account,period):0;
+    return {id:account,name:data.accounts.find(a=>a.id===account)?.name??'Финансовая подушка',
+      transferred,suggested:transferred+sum(rows.map(row=>row.amount))};
+  });
+  return [...standard,...cushions].map(row=>({...row,amount:Math.max(0,(saved?.[row.id]??row.suggested)-row.transferred)}));
+}
+
+export function Dashboard({data:d,date,go,updateBalance,income,expense,transfer,purchase,prediction,openPayment,openMonth}:{data:Data;date:string;go:(page:string)=>void;updateBalance:()=>void;income:(event?:Event)=>void;expense:()=>void;transfer:()=>void;purchase:()=>void;prediction:ReturnType<typeof forecast>|null;openPayment:(event:Event)=>void;openMonth:(period:string)=>void}){
   const goal=d.goals.find(g=>!g.completed);
-  const upcoming=calendar(d,date,month(date,2));
-  const expected=upcoming.find(event=>event.kind==='income'&&event.date===date&&remainingEvent(event,d.transactions)>0&&guaranteed(d,event))??nextIncome(d,upcoming,date);
-  const dispatch=(action:()=>void)=>{setOperations(false);action();};
-  const capital=sum(d.accounts.map(a=>balance(a,d.transactions)));
-  const savings=sum(d.accounts.filter(a=>a.kind!=='cash').map(a=>balance(a,d.transactions)));
-  const debts=sum(d.debts.map(debt=>effectiveDebt(debt,d).balance));
+  const spending=dailyBudget(d,date);
+  const safe=safeEnvelopeSpending(d,date,spending);
   const holdings=goal?goalHoldings(d,goal):null;
   const target=goal?downPayment(goal)+goal.reserve:0;
+  const upcoming=calendar(d,month(date,-1),addDays(date,30)).filter(e=>e.kind==='expense'&&remainingEvent(e,d.transactions)>0)
+    .sort((a,b)=>dueDate(a).localeCompare(dueDate(b)));
   const nextPlan=nextMonthPlan(d,date,prediction);
-  const savedPlan=d.settings.monthlySavingPlan?.[nextPlan.period];
-  const deposits=sum(nextPlan.savings.map(row=>Math.max(0,(savedPlan?.[row.id]??row.suggested)-row.transferred)));
-  const plannedTotal=nextPlan.paymentTotal+nextPlan.life+deposits;
-  const parts=[
-    {name:'Платежи и покупки',amount:nextPlan.paymentTotal,color:'bills'},
-    {name:'На жизнь',amount:nextPlan.life,color:'living'},
-    {name:'Пополнения',amount:deposits,color:'saving'},
-    {name:'Остаток по плану',amount:Math.max(0,nextPlan.income-plannedTotal),color:'left'},
-  ];
-  const scale=Math.max(nextPlan.income,plannedTotal);
-  const gathered=holdings?.total??0;
-  const progress=target>0?Math.max(0,Math.min(100,gathered/target*100)):0;
+  const deposits=savingsRows(d,prediction,nextPlan.period,nextPlan.savings).filter(row=>row.amount>0);
+  const advice=[
+    spending.shortage>0?{name:'Проверьте покрытие обязательных платежей',action:()=>go('calendar')}:null,
+    !d.settings.monthlySavingPlan?.[nextPlan.period]&&deposits.length?{name:'Проверьте план следующего месяца',action:()=>openMonth(nextPlan.period)}:null,
+    goal&&prediction?.deadline?.deficit?{name:'Посмотрите, что сдвигает дату покупки',action:()=>go('analytics')}:null,
+  ].filter(item=>item!==null).slice(0,3);
   return <>
-    <div className="page-heading"><div><p className="eyebrow">{dayLabel(date)}</p><h1>Главная</h1></div></div>
-    <section className="card capital-summary">
-      <div className="section-head"><div><h2>Свободные деньги сейчас</h2><strong className="large">{money(cash(d)-reserved(d))}</strong></div><Button variant="outline" onClick={updateBalance}>Сверить остаток</Button></div>
-      <details><summary>Счета и капитал</summary>
-        <p>Всего на счетах и в активах {money(capital)} · накопления и активы {money(savings)}.</p>
-        <p>Денежные счета {money(cash(d))} · из них зарезервировано {money(reserved(d))}.</p>
-        <Button variant="outline" onClick={()=>go('accounts')}>Все счета</Button>
-        <p>Чистая финансовая позиция {money(capital-debts)} после вычета долгов {money(debts)}.</p>
-      </details>
+    <SectionHeading page title="Главная" description={dayLabel(date)}/>
+    <section className="card capital-summary home-balance">
+      <div><h2>Общий капитал</h2><Amount className="large" value={sum(d.accounts.map(a=>balance(a,d.transactions)))}/></div>
+      <div><h2>Безопасно на жизнь</h2><Amount className="safe-amount" value={safe}/><p>{spending.income?'До '+shortDate(spending.end):'До конца расчётного периода'}</p></div>
     </section>
-    <Button className="main-operation" onClick={()=>setOperations(true)}>+ Операция</Button>
-    {operations&&<div className="overlay" onClick={()=>setOperations(false)}><section className="dialog small-dialog operation-sheet" role="dialog" aria-modal="true" aria-label="Новая операция" onClick={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==='Escape')setOperations(false);}}>
-      <div className="dialog-header"><h2>Новая операция</h2><Button variant="ghost" onClick={()=>setOperations(false)}>Закрыть</Button></div>
-      <Button autoFocus onClick={()=>dispatch(expense)}><ArrowUpRight size={18}/> Расход</Button>
-      <Button variant="outline" onClick={()=>dispatch(()=>income())}><ArrowDownLeft size={18}/> Доход</Button>
-      <Button variant="outline" onClick={()=>dispatch(transfer)}><ArrowLeftRight size={18}/> Перевод</Button>
-      <Button variant="ghost" onClick={()=>dispatch(purchase)}><ShoppingBag size={18}/> Хочу купить</Button>
-    </section></div>}
-    <section className="card">
-      <div className="section-head"><h2>Следующее поступление</h2></div>
-      {expected?<><div className="list-row"><span><b>{expected.name}</b><small>{shortDate(expected.date)} · ожидается</small></span><strong>{money(remainingEvent(expected,d.transactions))}</strong></div>
-        </>:<p>Поступления пока не запланированы.</p>}
-      <div className="dashboard-links">
-        {expected&&<Button variant="outline" onClick={()=>income(expected)}>Получил деньги</Button>}
-        <Button variant="ghost" onClick={()=>go('month')}>Открыть план месяца <ChevronRight size={16} aria-hidden="true"/></Button>
-      </div>
-    </section>
-    <details className="card"><summary>Подробнее о сегодняшнем бюджете</summary>{moneyToday}</details>
-    <div className="split home-insights">
-      {scale>0&&<section className="card"><div className="section-head"><div><h2>Бюджет месяца</h2><p>План · {dayLabel(nextPlan.period)}</p></div></div>
-        <div className="insight-track" aria-hidden="true">{parts.filter(part=>part.amount>0).map(part=>
-          <span key={part.color} className={'insight-'+part.color} style={{width:part.amount/scale*100+'%'}}/>)}</div>
-        <dl className="insight-legend">{parts.filter(part=>part.amount>0).map(part=><div key={part.color}>
-          <dt><span className={'insight-dot insight-'+part.color} aria-hidden="true"/>{part.name}</dt><dd>{money(part.amount)}</dd>
-        </div>)}</dl>
-        <p className={plannedTotal>nextPlan.income?'loss':undefined}>Ожидается {money(nextPlan.income)}{plannedTotal>nextPlan.income?' · не хватает '+money(plannedTotal-nextPlan.income):''}</p>
-      </section>}
-      <section className="card"><div className="section-head"><h2>Моя квартира</h2>{target>0&&<strong>{progress.toLocaleString('ru-KZ',{maximumFractionDigits:1})}%</strong>}</div>
-        {target>0?<><strong className="large">{money(gathered)}</strong><p>из {money(target)}</p>
-          <div className="insight-track" role="progressbar" aria-label="Прогресс к покупке квартиры" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><span className="insight-saving" style={{width:progress+'%'}}/></div>
-          <p>{prediction?.reached?'По прогнозу · '+dayLabel(prediction.reached):'Дата покупки пока не определена'}</p>
-        </>:<p>Добавь цель, чтобы видеть прогресс.</p>}
-        <Button variant="ghost" onClick={()=>go('goals')}>Открыть цель <ChevronRight size={16} aria-hidden="true"/></Button>
-      </section>
+    <div className="home-quick" aria-label="Быстрые действия">
+      <Button onClick={expense}><ArrowUpRight size={18}/>Расход</Button>
+      <Button variant="outline" onClick={()=>income()}><ArrowDownLeft size={18}/>Доход</Button>
+      <Button variant="outline" onClick={transfer}><ArrowLeftRight size={18}/>Перевод</Button>
+      <Button variant="outline" onClick={purchase}><ShoppingBag size={18}/>Покупка</Button>
+      <Button variant="ghost" onClick={updateBalance}>Сверить остаток</Button>
     </div>
+    {upcoming.length>0&&<section className="card">
+      <SectionHeading title="Ближайшие платежи" action={<Button variant="ghost" onClick={()=>go('calendar')}>Все платежи</Button>}/>
+      {upcoming.slice(0,3).map(e=><PaymentRow key={e.id} name={e.name}
+        detail={shortDate(dueDate(e))} status={dueDate(e)<date?'Просрочен':undefined}
+        value={<Amount value={remainingEvent(e,d.transactions)}/>} onClick={()=>openPayment(e)}/>)}
+    </section>}
+    {!!advice.length&&<section className="card"><SectionHeading title="Что сделать дальше"/>
+      {advice.map(item=><FinancialRow key={item.name} name={item.name} onClick={item.action}/>)}
+    </section>}
+    {(target>0||deposits.length>0)&&<div className="split home-insights">
+      {target>0&&<section className="card">
+        <SectionHeading title="Моя квартира" action={<Button variant="ghost" onClick={()=>go('goals')}>Открыть цель</Button>}/>
+        <Amount className="large" value={holdings?.total??0}/>
+        <p>из {money(target)}{prediction?.reached?' · прогноз '+dayLabel(prediction.reached):''}</p>
+        <Progress className="insight-track" label="Прогресс к покупке квартиры" value={(holdings?.total??0)/target*100}/>
+      </section>}
+      {deposits.length>0&&<section className="card">
+        <SectionHeading title="План накоплений" description={dayLabel(nextPlan.period)}/>
+        {deposits.map(deposit=><FinancialRow key={deposit.id} name={deposit.name} value={<Amount value={deposit.amount}/>}/>)}
+      </section>}
+    </div>}
   </>;
 }
 
 export function MonthScreen({data,date,period,prediction,changePeriod,editPlan,openBudget,openPayments,report,openPayment}:{data:Data;date:string;period:string;prediction:ReturnType<typeof forecast>|null;changePeriod:(period:string)=>void;editPlan:(period:string)=>void;openBudget:()=>void;openPayments:()=>void;report:()=>void;openPayment:(row:ReturnType<typeof nextMonthPlan>['obligations'][number])=>void}){
   const plan=nextMonthPlan(data,date,prediction,period);
-  const savedPlan=data.settings.monthlySavingPlan?.[period];
-  const savingTotal=sum(plan.savings.map(row=>savedPlan?.[row.id]??row.suggested));
-  const leftToSave=sum(plan.savings.map(row=>Math.max(0,(savedPlan?.[row.id]??row.suggested)-row.transferred)));
-  const missingDates=plan.obligations.filter(row=>!row.date);
-  const renderPayment=(row:typeof plan.obligations[number])=><button type="button" className="list-row" key={row.id} onClick={()=>openPayment(row)}>
-    <span><b>{row.name}</b><small>{row.date?shortDate(row.date):'Указать дату платежа'}</small>
-      {row.held>0&&<small>Отложено {money(row.held)}</small>}
-      {row.paid>0&&row.amount>0&&<small>Уже оплачено {money(row.paid)}</small>}</span>
-    <strong>{money(row.amount||row.paid)}</strong><ChevronRight size={16} aria-hidden="true"/></button>;
-  return (
-    <section className="card month-screen">
-      <header className="month-toolbar">
-        <div className="month-switcher" role="group" aria-label="Период плана">
-          <Button variant="ghost" className="month-step" aria-label="Предыдущий месяц" disabled={period<=first(date)} onClick={()=>changePeriod(month(period,-1))}><ChevronLeft size={18} aria-hidden="true"/></Button>
-          <h1>{new Intl.DateTimeFormat('ru-KZ',{month:'long',year:'numeric',timeZone:'Asia/Almaty'}).format(new Date(period+'T12:00:00+05:00'))}</h1>
-          <Button variant="ghost" className="month-step" aria-label="Следующий месяц" onClick={()=>changePeriod(month(period,1))}><ChevronRight size={18} aria-hidden="true"/></Button>
-        </div>
-        {plan.savings.length>0&&<Button variant="outline" onClick={()=>editPlan(plan.period)}>{savedPlan?'Изменить план':'Сохранить свой план'}</Button>}
-      </header>
-      <details><summary>Ожидаемые поступления · {money(plan.income)}</summary>
-        {plan.incomeEvents.map(event=><div className="list-row" key={event.id}><span><b>{event.name}</b><small>{shortDate(event.date)}</small></span><strong>{money(remainingEvent(event,data.transactions))}</strong></div>)}
-      </details>
-      {missingDates.length>0&&<details open><summary>Уточнить даты · {missingDates.length}</summary>{missingDates.map(renderPayment)}</details>}
-
-      <details open><summary>Платежи и покупки · {money(plan.paymentTotal)}</summary>
-        {plan.obligations.filter(row=>row.debt&&row.date).map(renderPayment)}
-        {plan.obligations.some(row=>!row.debt&&row.date)&&<details><summary>Другие платежи и покупки</summary>
-          {plan.obligations.filter(row=>!row.debt&&row.date).map(renderPayment)}
-        </details>}
-        {plan.paid.length>0&&<details><summary>Уже оплачено · {money(sum(plan.paid.map(row=>row.paid)))}</summary>{plan.paid.map(renderPayment)}</details>}
-      </details>
-      <details><summary>На жизнь · {money(plan.life)}</summary><Button variant="outline" onClick={openBudget}>Категории и резервы</Button></details>
-      {!!plan.savings.length&&<details open><summary>{savedPlan?'Пополнения по твоему плану':'Предлагаемые пополнения'} · {money(savingTotal)}</summary>
-        {plan.savings.map(row=>{
-          const target=savedPlan?.[row.id]??row.suggested;
-          return <div className="list-row" key={row.id}><span><b>{row.name}</b><small>Переведено {money(row.transferred)} · осталось {money(Math.max(0,target-row.transferred))}</small></span><strong>{money(target)}</strong></div>;
-        })}
-        {!prediction&&<p>Добавь цель, чтобы рассчитать пополнения.</p>}
-      </details>}
-      {plan.income<plan.paymentTotal+plan.life+leftToSave&&<p className="loss">Из ожидаемых доходов не хватает {money(plan.paymentTotal+plan.life+leftToSave-plan.income)}. Остаток на сегодня в эту сумму не заложен.</p>}
-      <div className="dashboard-links"><Button variant="outline" onClick={openPayments}>Календарь платежей</Button><Button variant="outline" onClick={report}>Отчёт за месяц</Button></div>
-    </section>
-  );
+  const saved=data.settings.monthlySavingPlan?.[period];
+  const received=sum(data.transactions.filter(row=>entryMonth(row)===period&&row.kind==='income').map(row=>row.amount));
+  const living=livingReserve(data,undefined,period);
+  const deposits=savingsRows(data,prediction,period,plan.savings);
+  const toSave=sum(deposits.map(row=>row.amount));
+  const label=new Intl.DateTimeFormat('ru-KZ',{month:'long',year:'numeric',timeZone:'Asia/Almaty'}).format(new Date(period+'T12:00:00+05:00'));
+  return <section className="card month-screen">
+    <header className="month-toolbar">
+      <div className="month-switcher" role="group" aria-label="Период плана">
+        <Button variant="ghost" className="month-step" aria-label="Предыдущий месяц" onClick={()=>changePeriod(month(period,-1))}><ChevronLeft size={18}/></Button>
+        <h1>{label}</h1>
+        <Button variant="ghost" className="month-step" aria-label="Следующий месяц" onClick={()=>changePeriod(month(period,1))}><ChevronRight size={18}/></Button>
+      </div>
+      <Button variant="ghost" onClick={report}>Отчёт за месяц</Button>
+    </header>
+    <dl className="month-totals">
+      {([
+        ['Получено',received],['Ожидается',plan.income],['Нужно оплатить',plan.paymentTotal],
+        ['Выделено на жизнь',living],['Направить на накопления',toSave],
+      ] as const).map(([name,amount])=><div key={name}><dt>{name}</dt><dd><Amount value={amount}/></dd></div>)}
+    </dl>
+    {plan.incomeEvents.length>0&&<Disclosure summary="Поступления по датам">
+      {plan.incomeEvents.map(e=><FinancialRow key={e.id} name={e.name} detail={shortDate(e.date)} value={<Amount value={remainingEvent(e,data.transactions)}/>}/>)}
+    </Disclosure>}
+    {plan.obligations.length>0&&<Disclosure summary="Что оплатить">
+      {plan.obligations.map(row=><PaymentRow key={row.id} name={row.name} detail={row.date?shortDate(row.date):'Указать дату'}
+        status={row.held?'Зарезервировано '+money(row.held):undefined} value={<Amount value={row.amount}/>} onClick={()=>openPayment(row)}/>)}
+      <Button variant="ghost" onClick={openPayments}>Календарь платежей</Button>
+    </Disclosure>}
+    <div className="month-life"><p>План на жизнь {money(plan.life)}</p><Button variant="ghost" onClick={openBudget}>Кошельки</Button></div>
+    {deposits.length>0&&<Disclosure summary="В какие счета пополнить">
+      {deposits.map(row=><FinancialRow key={row.id} name={row.name} detail={row.transferred?'Уже переведено '+money(row.transferred):undefined} value={<Amount value={row.amount}/>}/>)}
+      {plan.savings.length>0&&<Button variant="outline" onClick={()=>editPlan(period)}>{saved?'Изменить план':'Задать свой план'}</Button>}
+    </Disclosure>}
+  </section>;
 }

@@ -1,3 +1,4 @@
+import {Disclosure} from './ui/finance';
 import type {FormEvent,ReactNode} from 'react';
 import {X} from 'lucide-react';
 import {Button} from './ui/button';
@@ -6,7 +7,7 @@ export type Value=string|number|boolean;
 export type Field={key:string;label:string;type?:'money'|'number'|'date'|'boolean'|'textarea'|'text'|'select';options?:[string,string][];optional?:boolean};
 export const field=(key:string,label:string,type?:Field['type'],optional=false):Field=>({key,label,type,optional});
 export const select=(key:string,label:string,options:[string,string][],optional=false):Field=>({key,label,type:'select',options,optional});
-export function FormModal({title,fields,initial,close,submit,busy,children,primaryFields}:{title:string;fields:Field[];initial:Record<string,Value>;close:()=>void;submit:(values:Record<string,Value>)=>void;busy:boolean;children?:ReactNode;primaryFields?:number}){
+export function FormModal({title,fields,initial,close,submit,busy,children,primaryFields,hideSubmit,submitLabel}:{title:string;fields:Field[];initial:Record<string,Value>;close:()=>void;submit:(values:Record<string,Value>)=>void;busy:boolean;children?:ReactNode;primaryFields?:number;hideSubmit?:boolean;submitLabel?:string}){
   function onSubmit(e:FormEvent<HTMLFormElement>){
     e.preventDefault();
     const form=new FormData(e.currentTarget);
@@ -29,8 +30,8 @@ export function FormModal({title,fields,initial,close,submit,busy,children,prima
   return <div className="overlay" onClick={close}><section className="dialog" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}>
     <div className="dialog-header"><h2>{title}</h2><Button variant="ghost" onClick={close} aria-label="Закрыть"><X size={20}/></Button></div>
     {children}
-    <form onSubmit={onSubmit}><div className="form-grid">{renderFields(fields.slice(0,primaryFields??fields.length))}</div>
-    {primaryFields!==undefined&&primaryFields<fields.length&&<details><summary>Дополнительно</summary><div className="form-grid">{renderFields(fields.slice(primaryFields))}</div></details>}<div className="actions"><Button variant="outline" type="button" onClick={close}>Отмена</Button><Button disabled={busy}>Сохранить</Button></div></form>
+    {!hideSubmit&&<form onSubmit={onSubmit}><div className="form-grid">{renderFields(fields.slice(0,primaryFields??fields.length))}</div>
+    {primaryFields!==undefined&&primaryFields<fields.length&&<Disclosure summary={<>Дополнительно</>}><div className="form-grid">{renderFields(fields.slice(primaryFields))}</div></Disclosure>}<div className="actions"><Button variant="outline" type="button" onClick={close}>Отмена</Button><Button disabled={busy}>{submitLabel??'Сохранить'}</Button></div></form>}
   </section></div>;
 }
-export function Blank({children}:{children:ReactNode}){return <div className="blank">{children}</div>}
+export {Blank} from './ui/finance';

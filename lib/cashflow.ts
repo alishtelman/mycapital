@@ -1,4 +1,4 @@
-import {addDays,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,entryMonth,first,forecast,guaranteed,month,payDate,remainingEvent,reserved,score,sum,uses,usedReserve,type Data,type Entry,type Event} from './finance.ts';
+import {addDays,availableEnvelope,allocation,balance,billNeeds,budgetCuts,calendar,cash,categoryBudget,categorySpent,dailyBudget,days,debtComparison,downPayment,dueDate,effectiveDebt,entryMonth,first,forecast,goalValue,guaranteed,livingReserve,month,payDate,purchaseComfortFloor,releaseLiving,remainingEvent,reserved,sum,uses,usedReserve,type Data,type Entry,type Event} from './finance.ts';
 
 export function cashflow(d:Data,start:string,horizon=90){
   const end=addDays(start,horizon-1);
@@ -16,7 +16,7 @@ export function cashflow(d:Data,start:string,horizon=90){
   }
   let current=cash(d);
   let envelopes=reserved(d);
-  let reservedLife=sum(d.categories.map(c=>reserved(d,c.id)));
+  let projectedLivingUsed=0;
   const rows: {date:string;income:number;expenses:number;savings:number;available:number;events:Event[];livingReleased:number;cause:string}[]=[];
   for(let i=0;i<horizon;i++){
     const date=addDays(start,i);
@@ -36,8 +36,9 @@ export function cashflow(d:Data,start:string,horizon=90){
       return Math.max(0,Math.min(daily,budget-spent-priorProjection));
     }));
     const released=sum(today.map(e=>e.kind==='expense'?Math.min(reserved(d,e.id),remainingEvent(e,d.transactions)):e.kind==='saving'?e.amount:0));
-    const lifeRelease=Math.min(living,reservedLife);
-    reservedLife-=lifeRelease;
+    const eligibleLiving=livingReserve(d,undefined,date);
+    const lifeRelease=Math.min(living,Math.max(0,eligibleLiving-projectedLivingUsed));
+    projectedLivingUsed+=lifeRelease;
     const beforeIncome=current-expenses-savings-living;
     current=beforeIncome+sameDayIncome;
     envelopes=Math.max(0,envelopes-released-lifeRelease);
@@ -58,7 +59,7 @@ export function closedPeriodAvailability(d:Data,date:string){
 }
 
 export function paymentState(d:Data,e:Event,date:string){
-  const actual=sum(d.transactions.filter(t=>t.event===e.id).map(t=>t.amount));
+  const actual=sum(d.transactions.filter(t=>t.event===e.id&&t.kind==='expense'&&!t.openingBalanceIncluded).map(t=>t.amount));
   const remaining=remainingEvent(e,d.transactions);
   const held=Math.min(remaining,reserved(d,e.id));
   const label=e.status==='canceled'?'Отменён':e.status==='settled_before_tracking'?'Оплачено до начала учёта':!remaining?'Оплачен':actual?(dueDate(e)<date?'Частично оплачен · остаток просрочен':'Частично оплачен'):dueDate(e)<date?'Просрочен':
@@ -68,7 +69,7 @@ export function paymentState(d:Data,e:Event,date:string){
 
 export function withPaymentReserves(d:Data,entry:Entry,target:string){
   let remaining=entry.amount;
-  const items=d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items).filter(i=>i.target===target&&
+  const items=d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items).filter(i=>i.target===target&&availableEnvelope(i,entryMonth(entry))&&
     (entry.event?['bills','purchases'].includes(i.group):i.group==='living'));
   const reserveUses=[];
   for(const i of items){
@@ -156,7 +157,7 @@ export function purchaseOptions(d:Data,date:string,price:number,purchaseDate=dat
   const id=existing??'assessment';
   return [0,.5,1].map((factor,index)=>{
     const key=first(purchaseDate);
-    const {changes}=budgetCuts(d,purchaseDate,price);
+    const {changes}=budgetCuts(d,purchaseDate,price,'',true);
     const budgets={...d.settings.monthly?.[key]};
     for(const change of changes)budgets[change.category.id]=categoryBudget(d,change.category,purchaseDate)-Math.floor(change.amount*factor);
     const adjusted={...d,settings:{...d.settings,monthly:{...d.settings.monthly,[key]:budgets}}};
@@ -165,14 +166,28 @@ export function purchaseOptions(d:Data,date:string,price:number,purchaseDate=dat
       id,name:current?.name??'Незапланированная покупка',date:purchaseDate,amount:price,minimum:0,maximum:price,
       rank:current?.rank??1,required:current?.required??false,movable:true,staged:false,category:'',status:'planned',comment:''
     }]};
-    const projected=goal?forecast(withPurchase,goal,date).reached:'';
     const cuts=changes.filter(x=>factor&&Math.floor(x.amount*factor)>0).map(x=>({...x,amount:Math.floor(x.amount*factor)}));
     const plannedAmount=existing?billNeeds(adjusted,date).purchases.find(x=>x.event.id===exempt)?.amount??0:0;
     const funding=bill.save+plannedAmount+reserved(d,exempt||'assessment');
     const buyingToday=purchaseDate===date;
-    const proposal=buyingToday?allocation(withPurchase,date).filter(i=>['otbasy','bcc','reserve','debt'].includes(i.group)):[];
-    return {label:['Комфортный','Сбалансированный','Приоритет накоплений'][index],cuts,budgets,data:withPurchase,base,projected,
-      delay:base&&projected?days(base,projected):null,shortfall:buyingToday?Math.max(0,price-funding):null,proposal};
+    let redistributed=withPurchase;
+    const walletMoves=[];
+    let gap=buyingToday&&bill.free>=bill.obligations+bill.planned?Math.ceil(Math.max(0,price-funding)*factor):0;
+    for(const category of [...d.categories].filter(c=>c.flexible).sort((a,b)=>b.rank-a.rank)){
+      const comfort=Math.max(0,purchaseComfortFloor(category,categoryBudget(d,category,date))-categorySpent(d,category.id,date));
+      const available=livingReserve(d,category.id,date);
+      const amount=Math.min(gap,Math.max(0,available-comfort));
+      if(!amount)continue;
+      const released=releaseLiving(redistributed,category.id,amount,date);
+      if(!released)continue;
+      redistributed=released;
+      walletMoves.push({category,amount});
+      gap-=amount;
+    }
+    const projected=goal?forecast(redistributed,goal,date).reached:'';
+    const proposal=buyingToday?allocation(redistributed,date).filter(i=>['otbasy','bcc','reserve','debt'].includes(i.group)):[];
+    return {label:['Комфортный','Сбалансированный','Приоритет накоплений'][index],cuts,walletMoves,budgets,data:redistributed,base,projected,
+      delay:base&&projected?days(base,projected):null,shortfall:buyingToday?Math.max(0,price-funding-sum(walletMoves.map(move=>move.amount))):null,proposal};
 
   });
 }
@@ -186,7 +201,7 @@ export function monthlyReport(d:Data,period:string){
   const snapshot=d.settings.closings?.[start];
   const previous=d.settings.closings?.[month(start,-1)];
   const goal=d.goals.find(g=>!g.completed);
-  const goalBalance=(entries:Entry[])=>sum(d.accounts.filter(a=>savings.has(a.id)&&a.goalIncluded!==false).map(a=>balance(a,entries)));
+  const goalBalance=(entries:Entry[])=>sum(d.accounts.map(a=>goalValue(a,entries)));
   const goalGap=goal?Math.max(0,downPayment(goal)+goal.reserve-goalBalance(after)):null;
   const goalProgress=goal&&goalGap!==null?Math.max(0,downPayment(goal)+goal.reserve-goalBalance(before))-goalGap:null;
   return {partial:!!d.settings.partialMonths?.[start],goalGap,goalProgress,income:sum(tx.filter(t=>t.kind==='income').map(t=>t.amount)),expenses:sum(tx.filter(t=>t.kind==='expense').map(t=>t.amount)),
@@ -194,7 +209,6 @@ export function monthlyReport(d:Data,period:string){
     growth:sum(d.accounts.filter(a=>savings.has(a.id)).map(a=>balance(a,after)-balance(a,before))),
     scoreDelta:snapshot?.score!==undefined&&previous?.score!==undefined?snapshot.score-previous.score:null,
     interest:snapshot?.interest??null,
-    currentScore:sum(d.accounts.filter(a=>a.kind==='otbasy').map(a=>score(a.interest,a.contract)||a.score)),
     surplus:d.categories.map(c=>({id:c.id,amount:Math.max(0,categoryBudget(d,c,start)-categorySpent(d,c.id,start))})),snapshot};
 }
 

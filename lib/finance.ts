@@ -5,13 +5,13 @@ export type Payment = {category?:string; minimum?:number; maximum?:number; accou
 export type Rule = {id:string; name:string; kind:'income'|'expense'; amount:number; date:string; base?:number; percent?:number; repeat:'monthly'|'weekly'|'fortnightly'|'bimonthly'|'quarterly'|'semiannual'|'yearly'|'once'|'custom'; active:boolean; payment?:Payment; dates?:string[]; uncertain?:boolean};
 export type Category = {id:string; name:string; budget:number; minimum:number; maximum:number; rank:number; flexible:boolean};
 export type Purchase = {id:string; name:string; date:string; amount:number; minimum:number; maximum:number; rank:number; required:boolean; movable:boolean; staged:boolean; category:string; status:'planned'|'done'|'canceled'; comment:string};
-export type Debt = {id:string; name:string; kind:'mortgage'|'installment'; balance:number; payment:number; date:string; rate:number; apr:number; original:number; confirmed:boolean; installments?:{date:string;amount:number}[]};
-export type Goal = {id:string; name:string; price:number; down:number; reserve:number; date:string; latest:string; score:number; buffer:number; laterScore:number; rentMin:number; rentMax:number; rate:number; laterRate:number; completed:boolean};
+export type Debt = {id:string; name:string; kind:'mortgage'|'installment'; balance:number; payment:number; date:string; rate:number; apr:number; original:number; confirmed:boolean; kaspiMode?:'aggregate'|'individual'; accountedPayments?:string[]; installments?:{date:string;amount:number}[]};
+export type Goal = {id:string; name:string; price:number; down:number; reserve:number; date:string; latest:string; score:number; buffer:number; laterScore:number; rentMin:number; rentMax:number; rate:number; laterRate:number; completed:boolean; intermediate?:boolean};
 export type Scenario = {id:string; name:string; income:number; expenses:number; rates:number; market:number; price:number; bonusDelay:number; otbasyShare:number};
-export type Item = {id:string; name:string; amount:number; target:string; reason:string; group:string};
+export type Item = {id:string; name:string; amount:number; target:string; reason:string; group:string; budgetMonth?:string};
 export type Plan = {id:string; date:string; items:Item[]; status:'accepted'|'released'};
-export type Bonus = {id:string; account:string; year:number; date:string; eligible:number; credited:number; actual:number};
-export type Settings = {monthly?:Record<string,Record<string,number>>; conservative?:boolean; safetyDays?:number; reminderTime?:string; timeZone?:string; monthlySavingPlan?:Record<string,Record<string,number>>; roadmap?:Record<string,{done?:boolean;date?:string}>; plannedSales?:{id:string;account:string;date:string;value:number;proceeds:number}[]; partialMonths?:Record<string,boolean>; notifications?:Record<string,{read?:boolean; until?:string}>; closings?:Record<string,{date:string; score?:number; interest?:number; carried?:Record<string,number>}>; mrp:Record<string,number>; priority:string[]};
+export type Bonus = {id:string; account:string; year:number; date:string; eligible:number; credited:number; actual:number; eligibilityConfirmed?:boolean};
+export type Settings = {firstTrackingMonth?:string; livingAccount?:string; monthly?:Record<string,Record<string,number>>; conservative?:boolean; safetyDays?:number; reminderTime?:string; timeZone?:string; monthlySavingPlan?:Record<string,Record<string,number>>; roadmap?:Record<string,{done?:boolean;date?:string}>; plannedSales?:{id:string;account:string;date:string;value:number;proceeds:number}[]; partialMonths?:Record<string,boolean>; notifications?:Record<string,{read?:boolean; until?:string}>; closings?:Record<string,{date:string; score?:number; interest?:number; carried?:Record<string,number>}>; mrp:Record<string,number>; priority:string[]};
 export type Data = {accounts:Account[]; transactions:Entry[]; events:Event[]; rules:Rule[]; categories:Category[]; purchases:Purchase[]; debts:Debt[]; goals:Goal[]; scenarios:Scenario[]; plans:Plan[]; bonuses:Bonus[]; settings:Settings};
 
 export const empty = ():Data => ({accounts:[],transactions:[],events:[],rules:[],categories:[],purchases:[],debts:[],goals:[],scenarios:[],plans:[],bonuses:[],settings:{mrp:{},priority:['bills','living','purchases','reserve','otbasy','bcc','debt','free']}});
@@ -29,9 +29,25 @@ export function month(date:string,n:number) {
 export const first = (date:string) => date.slice(0,7)+'-01';
 export const depositYield = (amount:number,rate:number,days:number,effective=false) =>
   Math.round(amount*(effective ? Math.pow(1+rate/100,Math.max(0,days)/365)-1 : rate/100*Math.max(0,days)/365));
+export function bccYield(account:Account,principal:number,span:number,rateFactor=1){
+  return account.nominal&&account.nominal>0
+    ?depositYield(principal,account.nominal*rateFactor,span)
+    :depositYield(principal,account.rate*rateFactor,span,true);
+}
+function otbasyDays(from:string,to:string){
+  const dayNumber=(date:string)=>{
+    const [year,month,day]=date.split('-').map(Number);
+    return year*360+(month-1)*30+Math.min(day,30);
+  };
+  return Math.max(0,dayNumber(to)-dayNumber(from));
+}
+export function otbasyYield(principal:number,rate:number,from:string,to:string){
+  return Math.round(principal*rate*otbasyDays(from,to)/36000);
+}
 export const score = (interest:number,contract:number) => contract>0 ? interest*1000/contract : 0;
 export const bonus = (eligible:number,mrp:number,previouslyRewarded=0) => Math.round(Math.min(Math.max(0,eligible-previouslyRewarded),mrp*200)*0.2);
-export const downPayment = (goal:Goal) => Math.round(goal.price*goal.down/100);
+export const downPayment = (goal:Goal) => Math.round(goal.price*Math.max(goal.down,goal.intermediate?50:0)/100);
+export const loanScore = (goal:Goal) => Math.max(goal.score,goal.intermediate?5:0);
 export const ruleAmount = (r:Rule) => r.base&&r.percent ? Math.round(r.base*r.percent/100) : r.amount;
 export const categoryBudget = (d:Data,c:Category,date:string) => d.settings.monthly?.[first(date)]?.[c.id]??c.budget;
 export const availableForGoal = (a:Account,date:string) => a.goalIncluded!==false && (a.kind==='otbasy'||a.kind==='reserve'||(a.kind==='bcc'&&(!a.maturity||a.maturity<=date)&&(a.liquidity!=='term'||!!a.maturity)));
@@ -57,24 +73,33 @@ export const usedReserve = (entries:Entry[],id:string) => sum(entries.flatMap(us
 export const reserved = (d:Data,target?:string) => sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(i=>!target||i.target===target)
   .map(i=>Math.max(0,i.amount-usedReserve(d.transactions,i.id)))));
 export const cash = (d:Data) => sum(d.accounts.filter(a=>a.kind==='cash').map(a=>balance(a,d.transactions)));
-export function livingReserve(d:Data,category:string){
-  return sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(i=>i.group==='living'&&i.target===category)
+export const availableEnvelope = (item:Item,date?:string) => !date||!item.budgetMonth||item.budgetMonth<=first(date);
+export function livingReserve(d:Data,category?:string,date?:string){
+  return sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(i=>i.group==='living'&&
+    (!category||i.target===category)&&availableEnvelope(i,date))
     .map(i=>Math.max(0,i.amount-usedReserve(d.transactions,i.id)))));
 }
-export function releaseLiving(d:Data,category:string,amount:number){
-  if(!Number.isSafeInteger(amount)||amount<=0||amount>livingReserve(d,category))return null;
+export function livingFundingError(d:Data){
+  const linkedWallet=d.accounts.find(account=>account.kind==='cash'&&account.id===d.settings.livingAccount);
+  return linkedWallet&&balance(linkedWallet,d.transactions)<livingReserve(d)?
+    'На привязанном счёте должны остаться деньги, выделенные на жизнь.':'';
+}
+export function releaseLiving(d:Data,category:string,amount:number,date?:string){
+  if(!Number.isSafeInteger(amount)||amount<=0||amount>livingReserve(d,category,date))return null;
   let left=amount;
   const plans=d.plans.map(p=>p.status!=='accepted'?p:{...p,items:p.items.map(i=>{
-    if(!left||i.group!=='living'||i.target!==category)return i;
+    if(!left||i.group!=='living'||i.target!==category||!availableEnvelope(i,date))return i;
     const release=Math.min(left,Math.max(0,i.amount-usedReserve(d.transactions,i.id)));
     left-=release;
     return {...i,amount:i.amount-release};
   })});
   return {...d,plans};
 }
-export const remainingEvent = (e:Event,entries:Entry[]) => ['received','settled_before_tracking','canceled'].includes(e.status)?0:Math.max(0,e.amount-sum(entries.filter(t=>t.event===e.id).map(t=>t.amount)));
+export const remainingEvent = (e:Event,entries:Entry[]) => ['received','settled_before_tracking','canceled'].includes(e.status)?0:Math.max(0,e.amount-sum(entries.filter(t=>t.event===e.id&&t.kind===e.kind&&!t.openingBalanceIncluded).map(t=>t.amount)));
 
-export function schedule(debt:Debt, limit=600) {
+type OpenDebt=Debt&{pendingPayment?:{amount:number;interest:number}};
+
+export function schedule(debt:OpenDebt, limit=600) {
   let remaining=debt.balance;
   const payments: {date:string; amount:number; interest:number; remaining:number}[]=[];
   if(!debt.date || !debt.confirmed) return payments;
@@ -88,49 +113,70 @@ export function schedule(debt:Debt, limit=600) {
     return payments;
   }
   for(let i=0;i<limit&&remaining>0;i++){
-    const interest=Math.round(remaining*debt.rate/1200);
-    if(debt.payment<=interest) break;
-    const amount=Math.min(debt.payment,remaining+interest);
+    const pending=i===0?debt.pendingPayment:undefined;
+    const interest=pending?.interest??Math.round(remaining*debt.rate/1200);
+    if(!pending&&debt.payment<=interest) break;
+    const amount=Math.min(pending?.amount??debt.payment,remaining+interest);
     remaining+=interest-amount;
     payments.push({date:month(debt.date,i),amount,interest,remaining});
   }
   return payments;
 }
-export function effectiveDebt(debt:Debt,d:Data):Debt{
-  const linked=d.transactions.filter(t=>!t.openingBalanceIncluded&&t.kind==='expense'&&(t.category===debt.id||t.event.startsWith(debt.id+'@')||d.events.some(e=>e.id===t.event&&e.rule===debt.id)));
+export function effectiveDebt(debt:Debt,d:Data):OpenDebt{
+  const accounted=new Set(debt.accountedPayments??[]);
+  const linked=d.transactions.filter(t=>!accounted.has(t.id)&&!t.openingBalanceIncluded&&t.kind==='expense'&&(t.category===debt.id||t.event.startsWith(debt.id+'@')||d.events.some(e=>e.id===t.event&&e.rule===debt.id)));
   if(debt.installments){
     const payments=debt.installments.map(row=>{
       const id=debt.id+'@'+row.date;
       const event=d.events.find(e=>e.id===id);
       const paid=sum(linked.filter(t=>t.event===id).map(t=>t.amount));
-      return {...row,amount:event?.status==='received'?0:Math.max(0,row.amount-paid)};
+      return {...row,amount:event?.status==='received'||event?.status==='settled_before_tracking'?0:Math.max(0,row.amount-paid)};
     }).filter(row=>row.amount>0);
-    const early=sum(linked.filter(t=>!t.event).map(t=>t.amount));
-    const remaining=Math.max(0,sum(payments.map(p=>p.amount))-early);
-    return {...debt,installments:payments,balance:remaining,date:payments[0]?.date??'',payment:Math.min(remaining,payments[0]?.amount??0)};
+    const early=linked.filter(t=>!t.event);
+    const reducePayment=early.some(t=>t.reducePayment);
+    const total=sum(payments.map(p=>p.amount));
+    const remaining=Math.max(0,total-sum(early.map(t=>t.amount)));
+    let available=remaining;
+    const revised=payments.flatMap((row,index)=>{
+      const proportional=total>0&&reducePayment;
+      const amount=Math.min(available,proportional&&index<payments.length-1?Math.round(row.amount*remaining/total):proportional?available:row.amount);
+      available-=amount;
+      return amount>0?[{...row,amount}]:[];
+    });
+    return {...debt,installments:revised,balance:remaining,date:revised[0]?.date??'',payment:revised[0]?.amount??0};
   }
-  const groups=Map.groupBy(linked.filter(t=>t.event&&t.category!==debt.id),t=>t.event);
+  const groups=Map.groupBy(linked.filter(t=>t.event&&(t.event.startsWith(debt.id+'@')||d.events.some(e=>e.id===t.event&&e.rule===debt.id))),t=>t.event);
   let principal=debt.balance, date=debt.date;
+  let pendingPayment:OpenDebt['pendingPayment'];
   for(const [id,tx] of [...groups].sort((a,b)=>(d.events.find(e=>e.id===a[0])?.date??a[0]).localeCompare(d.events.find(e=>e.id===b[0])?.date??b[0]))){
     const event=d.events.find(e=>e.id===id);
     const paid=sum(tx.map(t=>t.amount));
     const interest=Math.round(principal*debt.rate/1200);
+    const dueAmount=event?.amount??Math.min(debt.payment,principal+interest);
+    const dueDate=id.startsWith(debt.id+'@')?id.slice(debt.id.length+1):event?.date;
     principal=Math.max(0,principal-Math.max(0,paid-interest));
-    if(event&&(event.status==='received'||paid>=event.amount||tx.some(t=>t.finalPayment))&&date<=event.date)date=month(debt.date,Math.max(1,(Number(event.date.slice(0,4))-Number(debt.date.slice(0,4)))*12+Number(event.date.slice(5,7))-Number(debt.date.slice(5,7))+1));
+    if(debt.date&&dueDate&&date<=dueDate&&(event?.status==='received'||paid>=dueAmount||tx.some(t=>t.finalPayment))){
+      const periods=(Number(dueDate.slice(0,4))-Number(debt.date.slice(0,4)))*12+Number(dueDate.slice(5,7))-Number(debt.date.slice(5,7))+1;
+      date=month(debt.date,Math.max(1,periods));
+      pendingPayment=undefined;
+    }else if(dueDate===date&&paid>0){
+      pendingPayment={amount:Math.max(0,dueAmount-paid),interest:Math.max(0,interest-paid)};
+    }
   }
-  const early=linked.filter(t=>!t.event||t.category===debt.id);
+  const scheduledIds=new Set([...groups.values()].flat().map(t=>t.id));
+  const early=linked.filter(t=>!scheduledIds.has(t.id));
   const reduced=Math.max(0,principal-sum(early.map(t=>t.amount)));
   const payment=early.some(t=>t.reducePayment)&&principal>0?Math.floor(debt.payment*reduced/principal):debt.payment;
-  return {...debt,date,balance:reduced,payment};
+  return {...debt,date,balance:reduced,payment,pendingPayment};
 }
 export function categorySpent(d:Data,id:string,date:string){
   return sum(d.transactions.filter(t=>t.kind==='expense'&&t.category===id&&!t.event&&entryMonth(t)===first(date)).map(t=>t.amount));
 }
-export function debtComparison(debt:Debt,depositRate:number){
+export function debtComparison(debt:Debt,depositRate:number,date?:string){
   const table=schedule(debt);
   const saved=sum(table.map(p=>p.interest));
   const horizon=table.at(-1)?.date;
-  const keepDeposit=horizon?depositYield(debt.balance,depositRate,Math.max(0,days(debt.date,horizon)+30),true):0;
+  const keepDeposit=horizon?depositYield(debt.balance,depositRate,Math.max(0,date?days(date,horizon):days(debt.date,horizon)+30),true):0;
   const investFreedPayments=horizon?sum(table.map(p=>depositYield(p.amount,depositRate,days(p.date,horizon),true))):0;
   const lost=keepDeposit-investFreedPayments;
   return {saved,lost,net:saved-lost,months:table.length};
@@ -141,7 +187,15 @@ export function calendar(d:Data,start:string,end:string) {
   const append=(e:Event)=>{
     if(!overrides.has(e.id)&&e.date>=start&&e.date<=end) generated.push(e);
   };
-  for(const r of d.rules.filter(r=>r.active&&(r.date||r.repeat==='custom'))){
+  // Legacy standalone duties are already included in the salary for this workspace model.
+  const duties=(name:string)=>/^\s*(?:оплата\s+)?дежурств/i.test(name);
+  const dutyRules=new Set(d.rules.filter(r=>r.kind==='income'&&duties(r.name)).map(r=>r.id));
+  for(const [id,event] of overrides){
+    if(event.kind==='income'&&(dutyRules.has(event.rule)||duties(event.name))&&remainingEvent(event,d.transactions)>0){
+      overrides.set(id,{...event,status:'canceled'});
+    }
+  }
+  for(const r of d.rules.filter(r=>r.active&&!dutyRules.has(r.id)&&(r.date||r.repeat==='custom'))){
     const recurring={monthly:1,bimonthly:2,quarterly:3,semiannual:6,yearly:12,once:1};
     const dates=r.repeat==='custom'?[...new Set(r.dates??[])].sort():[];
     if(r.repeat!=='custom')for(let i=0;i<1600;i++){
@@ -155,17 +209,15 @@ export function calendar(d:Data,start:string,end:string) {
   }
   for(const loan of d.debts){
     const payments=schedule(effectiveDebt(loan,d));
-    if(loan.installments){
-      const dates=new Set(payments.map(p=>loan.id+'@'+p.date));
-      for(const event of overrides.values()){
-        if(event.rule===loan.id&&!dates.has(event.id)&&remainingEvent(event,d.transactions)>0){
-          overrides.set(event.id,{...event,status:'canceled'});
-        }
+    const dates=new Set(payments.map(p=>loan.id+'@'+p.date));
+    for(const event of overrides.values()){
+      if(loan.confirmed&&event.rule===loan.id&&!dates.has(event.id)&&remainingEvent(event,d.transactions)>0){
+        overrides.set(event.id,{...event,status:'canceled'});
       }
     }
     for(const p of payments){
     const id=loan.id+'@'+p.date;
-    const alreadyPaid=loan.installments?sum(d.transactions.filter(t=>t.kind==='expense'&&t.event===id&&!t.openingBalanceIncluded).map(t=>t.amount)):0;
+    const alreadyPaid=sum(d.transactions.filter(t=>t.kind==='expense'&&t.event===id&&!t.openingBalanceIncluded).map(t=>t.amount));
     const override=overrides.get(id);
     if(loan.installments&&override&&override.status!=='received'){
       overrides.set(id,{...override,amount:p.amount+alreadyPaid});
@@ -185,7 +237,7 @@ export function calendar(d:Data,start:string,end:string) {
     const pending=i.amount-usedReserve(d.transactions,i.id);
     if(pending>0)append({id:'saving@'+i.id,name:i.name,kind:'saving',date:p.date,amount:pending,status:'planned',rule:i.target,comment:i.reason});
   }
-  for(const b of d.bonuses.filter(b=>b.date)) append({id:'bonus@'+b.id,name:'Госпремия · '+(d.accounts.find(a=>a.id===b.account)?.name??''),kind:'notice',date:b.date,amount:0,status:'planned',rule:b.id,comment:''});
+  for(const b of governmentAwards(d).filter(b=>b.date)) append({id:'bonus@'+b.id,name:'Госпремия · '+(d.accounts.find(a=>a.id===b.account)?.name??''),kind:'notice',date:b.date,amount:0,status:'planned',rule:b.id,comment:''});
   return [...[...overrides.values()].filter(e=>e.date>=start&&e.date<=end),...generated].sort((a,b)=>a.date.localeCompare(b.date));
 }
 
@@ -254,8 +306,8 @@ export function dailyBudget(d:Data,date:string){
   const obligations=sum(needs.map(x=>x.amount))+undated;
   const planned=sum(purchases.map(x=>x.amount));
   const free=Math.max(0,cash(d)-reserved(d));
-  const categories=d.categories.map(c=>({id:c.id,minimum:Math.max(0,livingNeed(d,c,date,end)-reserved(d,c.id)),
-    available:Math.max(0,livingNeed(d,c,date,end,false)-reserved(d,c.id))}));
+  const categories=d.categories.map(c=>({id:c.id,minimum:Math.max(0,livingNeed(d,c,date,end)-livingReserve(d,c.id,date)),
+    available:Math.max(0,livingNeed(d,c,date,end,false)-livingReserve(d,c.id,date))}));
   const forLife=Math.min(Math.max(0,free-obligations-planned),sum(categories.map(c=>c.available)));
   return {income,end,undated,horizon:Math.max(1,days(date,end)),delayed,free,obligations,planned,forLife,
     daily:Math.floor(forLife/Math.max(1,days(date,end))),shortage:Math.max(0,obligations-free),
@@ -272,7 +324,7 @@ export function savingPlanProgress(d:Data,period:string,draft:Item[]=[]){
   if(!targets)return [];
   return d.accounts.flatMap(account=>{
     const target=targets[account.id];
-    if(target===undefined||(account.kind!=='otbasy'&&account.kind!=='bcc'))return [];
+    if(target===undefined||!['otbasy','bcc','reserve'].includes(account.kind))return [];
     const transferred=depositTransfers(d,account.id,period);
     const held=sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(item=>item.group===account.kind&&item.target===account.id)
       .map(item=>Math.max(0,item.amount-usedReserve(d.transactions,item.id)))));
@@ -287,7 +339,7 @@ export function allocation(d:Data,date:string,choice?:Scenario,period=first(date
   const goal=d.goals.find(g=>!g.completed);
   const items:Item[]=[];
   function add(group:string,target:string,name:string,wanted:number,reason:string){
-    const amount=Math.min(left,Math.max(0,Math.round(wanted)-reserved(d,target)));
+    const amount=Math.min(left,Math.max(0,Math.round(wanted)-(group==='living'?livingReserve(d,target,date):reserved(d,target))));
     if(amount>0){items.push({id:group+':'+target,group,target,name,amount,reason});left-=amount;}
   }
   let undatedHeld=0;
@@ -310,19 +362,20 @@ export function allocation(d:Data,date:string,choice?:Scenario,period=first(date
     }
     if(group==='otbasy'&&goal){
       const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&goalShare(a)>0&&goalPurpose(a)==='down');
-      const horizon=Math.max(0,days(date,goal.date));
+      const horizon=otbasyDays(date,goal.date);
       const contract=Math.max(...accounts.map(a=>a.futureContract||a.contract),0);
-      const base=sum(accounts.map(a=>(a.interest||a.score*a.contract/1000)+depositYield(balance(a,d.transactions),a.rate,horizon)));
+      const base=sum(accounts.map(a=>(a.interest||a.score*a.contract/1000)+otbasyYield(balance(a,d.transactions),a.rate,date,goal.date)));
       let needed=Math.max(0,contract*(goal.score+goal.buffer)/1000-base);
+      const awards=governmentAwards(d);
       for(const a of [...accounts].sort((a,b)=>b.rate-a.rate)){
         const mrp=d.settings.mrp[date.slice(0,4)]??0;
-        const record=d.bonuses.find(b=>b.account===a.id&&String(b.year)===date.slice(0,4));
-        const bonusRoom=goal.date.slice(0,4)>date.slice(0,4)&&(!record?.date||record.date<=goal.date)?Math.max(0,mrp*200-Math.max(0,(record?.eligible??a.eligible)-(record?.credited??a.awarded))):0;
-        const opNeed=horizon&&a.rate?needed*36500/(a.rate*horizon):0;
+        const record=awards.find(b=>b.account===a.id&&String(b.year)===date.slice(0,4));
+        const bonusRoom=record&&goal.date.slice(0,4)>date.slice(0,4)&&(!record?.date||record.date<=goal.date)?Math.max(0,mrp*200-Math.max(0,(record?.eligible??a.eligible)-(record?.credited??a.awarded))):0;
+        const opNeed=horizon&&a.rate?needed*36000/(a.rate*horizon):0;
         const share=choice?left*choice.otbasyShare/100:0;
         const before=left;
         add(group,a.id,a.name,Math.max(opNeed,bonusRoom,share),opNeed>0?'Пополнение для прогнозного ОП':bonusRoom>0?'Доступный годовой лимит госпремии':'Доля выбранного сценария');
-        needed=Math.max(0,needed-depositYield(before-left,a.rate,horizon));
+        needed=Math.max(0,needed-otbasyYield(before-left,a.rate,date,goal.date));
       }
     }
     if(group==='bcc'){
@@ -351,15 +404,44 @@ export function allocation(d:Data,date:string,choice?:Scenario,period=first(date
   return items;
 }
 
-export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
+export function governmentAwards(d:Data){
+  const rows=new Map<string,Bonus>();
+  const accountById=new Map(d.accounts.filter(a=>a.kind==='otbasy').map(a=>[a.id,a]));
+  for(const award of d.bonuses){
+    const account=accountById.get(award.account);
+    if(!account)continue;
+    const owner=account.owner.trim().toLocaleLowerCase('ru').replace(/\s+/g,' ');
+    const key=award.year+':'+(owner?'owner:'+owner:'account:'+account.id);
+    const recorded=(row:Bonus)=>row.actual>0||d.transactions.some(t=>t.event==='credited@'+row.id&&t.kind==='income');
+    const previous=rows.get(key);
+    if(!previous||(!recorded(previous)&&recorded(award)))rows.set(key,award);
+  }
+  return [...rows.values()];
+}
+
+export function nextBccMaturity(account:Account,date:string){
+  let maturity=account.maturity;
+  if(maturity&&account.rollover&&account.termMonths&&maturity<date){
+    const elapsed=(Number(date.slice(0,4))-Number(maturity.slice(0,4)))*12+Number(date.slice(5,7))-Number(maturity.slice(5,7));
+    const offset=Math.max(0,Math.floor(elapsed/account.termMonths));
+    const candidate=month(maturity,offset*account.termMonths);
+    maturity=candidate<date?month(maturity,(offset+1)*account.termMonths):candidate;
+  }
+  return maturity;
+}
+
+export type SavingsPolicy={conditionalBonus?:boolean; excludeSales?:boolean; monthlyExtra?:number; endDate?:string};
+
+export function forecast(d:Data,goal:Goal,start:string,s?:Scenario,policy?:SavingsPolicy){
   const accounts=d.accounts.filter(a=>a.kind==='otbasy'&&goalShare(a)>0&&goalPurpose(a)==='down');
   const contract=Math.max(0,...accounts.map(a=>a.futureContract||a.contract));
   let otbasy=sum(accounts.map(a=>goalValue(a,d.transactions)));
   // The bank's actual score is tied to the contract, independent of the amount earmarked in MyCapital.
   let interest=sum(accounts.map(a=>a.interest||a.score*a.contract/1000));
-  const cushionAccounts=d.accounts.filter(a=>goalPurpose(a)==='cushion'&&(a.kind==='cash'||availableForGoal(a,goal.date)));
+  const cushionAccounts=d.accounts.filter(a=>goalPurpose(a)==='cushion'&&(policy?['cash','reserve'].includes(a.kind)||a.kind==='bcc'&&a.liquidity==='liquid':a.kind==='cash'||availableForGoal(a,goal.date)));
   let reserves=sum(cushionAccounts.map(a=>goalValue(a,d.transactions)));
-  const bccAccounts=d.accounts.filter(a=>a.kind==='bcc'&&goalShare(a)>0&&goalPurpose(a)==='down');
+  const bccAccounts=d.accounts.filter(a=>a.kind==='bcc'&&goalShare(a)>0&&goalPurpose(a)==='down')
+    .map(a=>policy?{...a,maturity:nextBccMaturity(a,start),liquidity:a.liquidity??'term' as const}:a);
   let bcc=sum(bccAccounts.map(a=>goalValue(a,d.transactions)));
   const otRate=(Math.max(0,...accounts.map(a=>a.rate)))*(s?.rates??100)/100;
   const earmarkedCash=sum(cushionAccounts.filter(a=>a.kind==='cash').map(a=>goalValue(a,d.transactions)));
@@ -369,10 +451,10 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     -otbasy-bcc-(reserves-earmarkedCash)-otherDownPayment;
   const marketBalances=new Map(d.accounts.filter(a=>a.kind==='market').map(a=>[a.id,balance(a,d.transactions)]));
   const marketFactor=(s?.market??100)/100;
-  const sales=(d.settings.plannedSales??[]).filter(sale=>sale.date>=start&&!d.transactions.some(t=>t.kind==='sale'&&t.plannedSale===sale.id))
+  const sales=(policy?.excludeSales?[]:d.settings.plannedSales??[]).filter(sale=>sale.date>=start&&!d.transactions.some(t=>t.kind==='sale'&&t.plannedSale===sale.id))
     .sort((a,b)=>a.date.localeCompare(b.date));
   const down=Math.round(downPayment(goal)*(s?.price??100)/100);
-  const end=month(start,36);
+  const end=policy?.endDate??month(start,36);
   const events=calendar(d,month(start,-12),end).filter(e=>!e.id.startsWith('credited@')&&(e.date>=start||e.kind==='expense'));
   const due=events.map(e=>({...e,date:e.kind==='expense'&&e.date<start?start:e.kind==='income'&&d.rules.some(r=>r.id===e.rule&&r.repeat==='quarterly')?addDays(e.date,s?.bonusDelay??0):e.date}));
   const checkpoints=[goal.date,goal.latest].filter(date=>date>=start&&date<end).map(date=>addDays(date,1)).sort();
@@ -381,9 +463,27 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
   const otChoice=[...accounts].sort((a,b)=>b.rate-a.rate)[0];
   const bccChoice=[...bccAccounts].filter(a=>availableForGoal(a,goal.date)).sort((a,b)=>b.rate-a.rate)[0];
   const rateFactor=(s?.rates??100)/100;
+  const awards=governmentAwards(d);
+  const targetScore=loanScore(goal);
+  const requestedOp=targetScore+goal.buffer;
+  const otAccrued=new Map<string,number>();
   let cumulativeInterest=0, cumulativeBonus=0, reached='';
   const rows=[];
-  const deposits:{date:string;account:string;amount:number}[]=[];
+  const deposits:{date:string;account:string;amount:number;reason?:string}[]=[];
+  const projectedPlanTransfers=new Map<string,number>();
+  const pendingPlanAmount=(item:Item)=>Math.max(0,item.amount-usedReserve(d.transactions,item.id)-(projectedPlanTransfers.get(item.id)??0));
+  function applyProjectedPlan(items:Item[],amount:number){
+    if(!policy)return;
+    for(const item of items){
+      const applied=Math.min(amount,pendingPlanAmount(item));
+      if(applied)projectedPlanTransfers.set(item.id,(projectedPlanTransfers.get(item.id)??0)+applied);
+      amount-=applied;
+      if(!amount)break;
+    }
+  }
+  const startingCapital=sum(d.accounts.map(a=>balance(a,d.transactions)));
+  const debtSchedules=d.debts.map(loan=>{const current=effectiveDebt(loan,d);return {current,table:schedule(current)};});
+  const scaledIncome=(events:Event[])=>Math.round(sum(events.filter(e=>e.kind==='income').map(e=>remainingEvent(e,d.transactions)))*(s?.income??100)/100);
   for(let date=start;date<end;){
     const naturalEnd=month(first(date),1);
     const until=checkpoints.find(point=>point>date&&point<naturalEnd)??(naturalEnd>end?end:naturalEnd);
@@ -391,10 +491,12 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     const monthFraction=span/days(first(date),naturalEnd);
     const closed=!!d.settings.closings?.[first(date)];
     const candidates=due.filter(e=>e.date>=date&&e.date<until);
-    const income=Math.round(sum(candidates.filter(e=>e.kind==='income').map(e=>remainingEvent(e,d.transactions)))*(s?.income??100)/100);
+    const period=first(date);
+    const extra=policy?.monthlyExtra&&date===period?policy.monthlyExtra:0;
+    const income=scaledIncome(candidates)+extra;
     const datedBills=sum(candidates.filter(e=>e.kind==='expense').map(e=>remainingEvent(e,d.transactions)));
     const undatedBills=
-      sum(d.rules.filter(r=>r.active&&r.kind==='expense'&&!r.date).map(r=>Math.round(ruleAmount(r)*(r.repeat==='weekly'?52/12:r.repeat==='fortnightly'?26/12:r.repeat==='yearly'?1/12:r.repeat==='semiannual'?1/6:r.repeat==='bimonthly'?1/2:r.repeat==='quarterly'?1/3:1))))+
+      sum(d.rules.filter(r=>r.active&&r.kind==='expense'&&!r.date&&(r.repeat!=='custom'||!r.dates?.length)&&(r.repeat!=='once'||first(date)===first(start))).map(r=>Math.round(ruleAmount(r)*(r.repeat==='weekly'?52/12:r.repeat==='fortnightly'?26/12:r.repeat==='yearly'?1/12:r.repeat==='semiannual'?1/6:r.repeat==='bimonthly'?1/2:r.repeat==='quarterly'?1/3:1))))+
       sum(d.debts.filter(l=>!l.date||!l.confirmed).map(l=>{const debt=effectiveDebt(l,d);return Math.min(debt.payment,Math.max(0,debt.balance-debt.payment*Math.max(0,(Number(date.slice(0,4))-Number(start.slice(0,4)))*12+Number(date.slice(5,7))-Number(start.slice(5,7)))));}));
 
     const living=sum(d.categories.map(c=>{
@@ -404,14 +506,19 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     const expenses=datedBills+(closed?0:Math.round((undatedBills+living)*monthFraction));
     const otInterest=sum(accounts.map(a=>{
       const principal=otBalances.get(a.id)??0;
-      const earned=depositYield(principal,a.rate*rateFactor,span);
-      otBalances.set(a.id,principal+earned);
+      const earned=otbasyYield(principal,a.rate*rateFactor,date,until);
+      const accrued=(otAccrued.get(a.id)??0)+earned;
+      if(until.endsWith('-01-01')){
+        otBalances.set(a.id,principal+accrued);
+        otAccrued.set(a.id,0);
+      }else otAccrued.set(a.id,accrued);
       return earned;
     }));
+    const openingBcc=policy?new Map(bccBalances):null;
     const bccInterest=sum(bccAccounts.map(a=>{
       const principal=bccBalances.get(a.id)??0;
       const earningDays=!a.maturity||a.rollover||a.liquidity==='liquid'?span:Math.max(0,Math.min(span,days(date,a.maturity)));
-      const earned=depositYield(principal,a.rate*rateFactor,earningDays,true);
+      const earned=bccYield(a,principal,earningDays,rateFactor);
       bccBalances.set(a.id,principal+earned);
       return earned;
     }));
@@ -419,47 +526,102 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     otbasy+=otInterest;
     bcc+=bccInterest;
     cumulativeInterest+=bccInterest+otInterest;
-    for(const award of d.bonuses.filter(x=>x.date>=date&&x.date<until&&!d.events.some(e=>e.id==='credited@'+x.id&&e.status==='received')&&accounts.some(a=>a.id===x.account))){
-      const actualPosted=sum(d.transactions.filter(t=>t.event==='credited@'+award.id).map(t=>t.amount));
-      const amount=Math.max(0,(award.actual||bonus(award.eligible,d.settings.mrp[String(award.year)]??0,award.credited))-actualPosted);
+    for(const award of awards.filter(x=>x.date>=date&&x.date<until&&!d.events.some(e=>e.id==='credited@'+x.id&&e.status==='received')&&accounts.some(a=>a.id===x.account))){
+      const actualPosted=sum(d.transactions.filter(t=>t.event==='credited@'+award.id&&t.kind==='income').map(t=>t.amount));
+      const awardYear=String(award.year);
+      const eligible=award.eligible+(policy?sum(deposits.filter(row=>row.account===award.account&&row.date.startsWith(awardYear)).map(row=>row.amount)):0);
+      const planned=(!policy||policy.conditionalBonus&&award.eligibilityConfirmed)?bonus(eligible,d.settings.mrp[awardYear]??0,award.credited):0;
+      const amount=Math.max(0,(award.actual||planned)-actualPosted);
       otbasy+=amount;
       otBalances.set(award.account,(otBalances.get(award.account)??0)+amount);
       cumulativeBonus+=amount;
     }
-    const saleIncome=sum(sales.filter(sale=>sale.date>=date&&sale.date<until).map(sale=>{
+    const periodSales=sales.filter(sale=>sale.date>=date&&sale.date<until).flatMap(sale=>{
       const holding=marketBalances.get(sale.account)??0;
-      if(sale.value<=0||sale.value>holding)return 0;
+      if(sale.value<=0||sale.value>holding)return [];
       marketBalances.set(sale.account,holding-sale.value);
-      return sale.proceeds;
-    }));
+      return [{date:sale.date,amount:policy?Math.round(sale.proceeds*marketFactor):sale.proceeds}];
+    });
+    const saleIncome=sum(periodSales.map(sale=>sale.amount));
     const market=Math.round(sum([...marketBalances.values()])*marketFactor);
+    const openingLiquidity=liquid;
     liquid+=income+saleIncome-expenses;
-    const save=closed?0:Math.max(0,liquid);
+    const boundary=addDays(until,-1);
+    const nearEvents=policy?due.filter(e=>e.date>=until&&e.date<addDays(until,16)):[];
+    const firstIncome=nearEvents.filter(e=>e.kind==='income'&&remainingEvent(e,d.transactions)>0).map(e=>e.date).sort()[0];
+    const nearEnd=firstIncome??addDays(until,16);
+    const liquidityBuffer=sum(nearEvents.filter(e=>e.kind==='expense'&&e.date<nearEnd).map(e=>remainingEvent(e,d.transactions)))+
+      (policy?sum(d.categories.map(c=>livingNeed(d,c,until,nearEnd))):0);
+    const save=closed?0:Math.max(0,liquid-liquidityBuffer);
     const remainingPeriods=Math.max(1,Math.ceil(days(date,goal.date)/30.44));
-    const accepted=d.plans.filter(p=>p.status==='accepted'&&((p.date<date&&date===start)||(p.date>=date&&p.date<until)));
-    const confirmedTarget=(kind:Account['kind'])=>sum(accepted.flatMap(p=>p.items).filter(i=>d.accounts.some(a=>a.id===i.target&&a.kind===kind))
-      .map(i=>Math.max(0,i.amount-usedReserve(d.transactions,i.id))));
-    const toReserve=Math.min(save,Math.max(confirmedTarget('reserve'),Math.ceil(Math.max(0,goal.reserve-reserves)/remainingPeriods)));
+    const accepted=d.plans.filter(p=>p.status==='accepted'&&(policy?p.date<until:
+      (p.date<date&&date===start)||(p.date>=date&&p.date<until))).flatMap(p=>p.items);
+    const reserveItems=accepted.filter(i=>d.accounts.some(a=>a.id===i.target&&a.kind==='reserve'));
+    const toReserve=Math.min(save,Math.max(sum(reserveItems.map(pendingPlanAmount)),Math.ceil(Math.max(0,goal.reserve-reserves)/remainingPeriods)));
+    applyProjectedPlan(reserveItems,toReserve);
+    if(policy&&toReserve>0)deposits.push({date,account:cushionAccounts[0]?.id??'',amount:toReserve,reason:'Подушка отдельно от первоначального взноса'});
     reserves+=toReserve;
     liquid-=toReserve;
-    const available=save-toReserve;
-    const daysToGoal=Math.max(0,days(until,goal.date));
-    const projected=sum(accounts.map(a=>depositYield(otBalances.get(a.id)??0,a.rate*rateFactor,daysToGoal)));
-    const interestGap=Math.max(0,contract*(goal.score+goal.buffer)/1000-interest-projected);
-    const early=daysToGoal>0&&otRate>0?Math.ceil(interestGap*36500/(daysToGoal*otRate)):0;
-    const toOtbasy=accounts.length?Math.min(available,Math.max(early,confirmedTarget('otbasy'),Math.round(available*(s?.otbasyShare??0)/100))):0;
-    otbasy+=toOtbasy;
-    if(otChoice)otBalances.set(otChoice.id,(otBalances.get(otChoice.id)??0)+toOtbasy);
-    liquid-=toOtbasy;
-    const toBcc=!closed&&bccChoice&&until<=goal.date?Math.max(0,liquid):0;
-    if(bccChoice&&toBcc>0){
-      bcc+=liquid;
-      bccBalances.set(bccChoice.id,(bccBalances.get(bccChoice.id)??0)+liquid);
-      liquid=0;
+    let available=save-toReserve;
+    const explicit=d.settings.monthlySavingPlan?.[period];
+    const credit=(account:Account,value:number,reason?:string)=>{
+      const amount=Math.min(available,Math.max(0,value));
+      if(amount<=0)return 0;
+      const balances=account.kind==='otbasy'?otBalances:bccBalances;
+      balances.set(account.id,(balances.get(account.id)??0)+amount);
+      if(account.kind==='otbasy')otbasy+=amount;else bcc+=amount;
+      available-=amount;liquid-=amount;
+      deposits.push(policy?{date,account:account.id,amount,reason}:{date,account:account.id,amount});
+      return amount;
+    };
+    const planningDate=policy&&until>addDays(goal.date,1)?goal.latest:goal.date;
+    const eligibleBcc=bccAccounts.filter(a=>availableForGoal(a,planningDate)&&(!policy||
+      (a.liquidity!=='term'||a.maturity>=until)));
+    const bestBcc=eligibleBcc.filter(a=>(a.nominal??a.rate)>Math.max(0,...accounts.map(a=>a.rate)))
+      .sort((a,b)=>(b.nominal??b.rate)-(a.nominal??a.rate))[0];
+    const eligible=[...accounts,...eligibleBcc];
+    const acceptedFor=(account:Account)=>accepted.filter(item=>item.target===account.id&&item.group===account.kind);
+    if(explicit){
+      for(const account of eligible){
+        if(explicit[account.id]===undefined)continue;
+        const alreadyProjected=sum(deposits.filter(row=>row.account===account.id&&first(row.date)===period).map(row=>row.amount));
+        applyProjectedPlan(acceptedFor(account),credit(account,explicit[account.id]-depositTransfers(d,account.id,period)-alreadyProjected,'Остаток по вашему плану месяца'));
+      }
+    }else{
+      for(const account of eligible){
+        const items=acceptedFor(account);
+        applyProjectedPlan(items,credit(account,sum(items.map(pendingPlanAmount)),'Ранее принятое распределение'));
+      }
+      if(policy&&until<=addDays(planningDate,1)){
+        const before=available;
+        for(const award of awards.filter(a=>a.eligibilityConfirmed&&!a.actual&&a.date>boundary&&a.date<=planningDate&&String(a.year)===date.slice(0,4))
+          .sort((a,b)=>a.date.localeCompare(b.date)||b.eligible-a.eligible)){
+          const account=accounts.find(a=>a.id===award.account&&!!a.owner.trim()&&(a.opened&&a.opened<=boundary||(otBalances.get(a.id)??0)>0));
+          if(!account)continue;
+          const posted=sum(deposits.filter(row=>row.account===award.account&&row.date.startsWith(String(award.year))).map(row=>row.amount));
+          const cap=(d.settings.mrp[String(award.year)]??0)*200;
+          const room=Math.max(0,cap-Math.max(0,award.eligible+posted-award.credited));
+          const bccReturn=bestBcc?bccYield(bestBcc,room,days(boundary,award.date),rateFactor):0;
+          const bankReturn=otbasyYield(room,account.rate*rateFactor,boundary,award.date);
+          const premiumLimit=Math.max(0,Math.floor(before*0.9)-(before-available));
+          if(room*0.2+bankReturn>bccReturn)credit(account,Math.min(room,premiumLimit),'Проверенная база госпремии · начисление зависит от банка');
+        }
+        const projected=sum(accounts.map(a=>otbasyYield(otBalances.get(a.id)??0,a.rate*rateFactor,until,planningDate)));
+        const gap=Math.max(0,contract*requestedOp/1000-interest-projected);
+        const time=otbasyDays(until,planningDate);
+        const cap=time&&otRate?Math.ceil(gap*36000/(time*otRate)):0;
+        const share=Math.max(0,Math.round(before*(s?.otbasyShare??0)/100)-(before-available));
+        if(otChoice)credit(otChoice,Math.min(share,cap),'Ранний взнос для ОП с запасом');
+        if(bestBcc)credit(bestBcc,available,'Выше доходность, средства доступны к сроку сделки');
+      }else if(!policy){
+        const projected=sum(accounts.map(a=>otbasyYield(otBalances.get(a.id)??0,a.rate*rateFactor,until,goal.date)));
+        const interestGap=Math.max(0,contract*requestedOp/1000-interest-projected);
+        const daysToGoal=otbasyDays(until,goal.date);
+        const early=daysToGoal>0&&otRate>0?Math.ceil(interestGap*36000/(daysToGoal*otRate)):0;
+        if(otChoice)credit(otChoice,Math.max(early,Math.round(available*(s?.otbasyShare??0)/100)));
+        if(bccChoice&&until<=goal.date)credit(bccChoice,available);
+      }
     }
-    if(otChoice&&toOtbasy>0)deposits.push({date,account:otChoice.id,amount:toOtbasy});
-    if(bccChoice&&toBcc>0)deposits.push({date,account:bccChoice.id,amount:toBcc});
-    const boundary=addDays(until,-1);
     for(const a of [...bccAccounts].sort((a,b)=>a.rate-b.rate)){
       if(liquid>=0||!availableForGoal(a,boundary))continue;
       const principal=bccBalances.get(a.id)??0;
@@ -469,16 +631,26 @@ export function forecast(d:Data,goal:Goal,start:string,s?:Scenario){
     }
     const locked=sum(bccAccounts.filter(a=>!availableForGoal(a,boundary)).map(a=>bccBalances.get(a.id)??0));
     const op=score(interest,contract);
+    const datedLiquidity=(check:string)=>{
+      const through=candidates.filter(e=>e.date<=check);
+      const bccFunds=sum(bccAccounts.filter(a=>availableForGoal(a,check)).map(a=>openingBcc?.get(a.id)??0));
+      const proceeds=sum(periodSales.filter(sale=>sale.date<=check).map(sale=>sale.amount));
+      const livingThrough=closed?0:Math.round((undatedBills+living)*days(date,addDays(check,1))/days(period,naturalEnd));
+      return openingLiquidity+bccFunds+scaledIncome(through)+extra+proceeds-livingThrough-
+        sum(through.filter(e=>e.kind==='expense').map(e=>remainingEvent(e,d.transactions)));
+    };
+    const cashFloor=policy?Math.min(liquid,openingLiquidity+extra+sum(bccAccounts.filter(a=>availableForGoal(a,date))
+      .map(a=>openingBcc?.get(a.id)??0)),...[...new Set([...candidates.map(e=>e.date),boundary])].map(datedLiquidity)):liquid;
     const availableDown=Math.max(0,otbasy+Math.max(0,bcc-locked)+liquid);
     const transferable=Math.min(availableDown,Math.max(0,bcc-locked)+Math.max(0,liquid));
     const otbasyAtDeal=otbasy+transferable;
     const deficit=Math.max(0,down-availableDown)+Math.max(0,goal.reserve-reserves);
-    if(!reached&&deficit===0&&op>=goal.score&&otbasyAtDeal>=down&&accounts.length&&contract>0) reached=boundary;
-    rows.push({date:boundary,income,expenses,otbasy,bcc,reserves,op,deficit,interest:cumulativeInterest,bonus:cumulativeBonus,capital:otbasy+bcc+reserves+market+liquid+goalExcluded,
-      savings:otbasy+Math.max(0,bcc-locked)+reserves+liquid,target:down+goal.reserve,liquid,debt:sum(d.debts.map(loan=>schedule(effectiveDebt(loan,d)).filter(p=>p.date<until).at(-1)?.remaining??effectiveDebt(loan,d).balance))});
+    if(!reached&&deficit===0&&op>=(policy?requestedOp:targetScore)&&(!policy||cashFloor>=0)&&otbasyAtDeal>=down&&accounts.length&&contract>0) reached=boundary;
+    rows.push({date:boundary,income,saleIncome,expenses,otbasy,bcc,reserves,op,deficit,interest:cumulativeInterest,bonus:cumulativeBonus,capital:otbasy+bcc+reserves+market+liquid+goalExcluded,
+      savings:otbasy+Math.max(0,bcc-locked)+reserves+liquid,target:down+goal.reserve,liquid,cashFloor,availableDown,availableBcc:Math.max(0,bcc-locked),debt:sum(debtSchedules.map(({table,current})=>table.filter(p=>p.date<until).at(-1)?.remaining??current.balance))});
     date=until;
   }
-  return {rows,deposits,reached,deadline:rows.find(r=>r.date>=goal.date),
+  return {rows,deposits,reached,startingCapital,managed:!!policy,deadline:rows.find(r=>r.date>=goal.date),
     latest:rows.find(r=>r.date>=goal.latest)};
 }
 
@@ -504,20 +676,26 @@ export function validateEntry(d:Data,e:Entry,checkBalances=true){
   for(const link of links){
     const prior=d.transactions.find(t=>t.id===e.id);
     const item=d.plans.filter(p=>p.status==='accepted'||(prior&&uses(prior).some(x=>x.id===link.id))).flatMap(p=>p.items).find(i=>i.id===link.id);
-    if(!item||usedReserve(remaining,link.id)+link.amount>item.amount)return 'Сумма превышает остаток резерва.';
+    if(!item||!availableEnvelope(item,entryMonth(e))||usedReserve(remaining,link.id)+link.amount>item.amount)return 'Сумма превышает остаток резерва.';
   }
-  if(cash({...d,transactions:[...remaining,e]})<reserved({...d,transactions:[...remaining,e]})) return 'Часть свободных денег уже зарезервирована. Выберите резерв или освободите его в бюджете.';
+  const updated={...d,transactions:[...remaining,e]};
+  const walletError=livingFundingError(updated);
+  if(walletError)return walletError;
+  if(cash(updated)<reserved(updated)) return 'Часть свободных денег уже зарезервирована. Выберите резерв или освободите его в бюджете.';
   return '';
 }
 
-export function budgetCuts(d:Data,date:string,amount:number,except=''){
+export const purchaseComfortFloor = (category:Category,plan:number) => category.minimum||Math.ceil(plan*0.2);
+
+export function budgetCuts(d:Data,date:string,amount:number,except='',forPurchase=false){
   let gap=amount;
   const changes=[];
   const categories=[...d.categories].filter(c=>c.id!==except&&c.flexible).sort((a,b)=>b.rank-a.rank);
   for(const category of categories){
     const before=categoryBudget(d,category,date);
     const spent=categorySpent(d,category.id,date);
-    const protectedBudget=Math.max(category.minimum,spent+reserved(d,category.id));
+    const minimum=forPurchase?purchaseComfortFloor(category,before):category.minimum;
+    const protectedBudget=Math.max(minimum,spent+reserved(d,category.id));
     const cut=Math.min(gap,Math.max(0,before-protectedBudget));
     if(cut>0){changes.push({category,amount:cut,newBudget:before-cut});gap-=cut;}
   }
@@ -526,21 +704,38 @@ export function budgetCuts(d:Data,date:string,amount:number,except=''){
 
 export function optimizeSavings(d:Data,goal:Goal,date:string,scenario?:Scenario){
   const basis=scenario??{id:'base',name:'Базовый',income:100,expenses:100,rates:100,market:100,price:100,bonusDelay:0,otbasyShare:0};
-  const candidates=[...new Set([0,5,10,15,20,25,30,40,50,60,75,90,100,basis.otbasyShare])].map(share=>{
+  const otbasy=new Set(d.accounts.filter(account=>account.kind==='otbasy').map(account=>account.id));
+  const candidates=new Map<number,ReturnType<typeof run>>();
+  function run(share:number){
     const model={...basis,otbasyShare:share};
-    const estimate=forecast(d,goal,date,model);
+    const estimate=forecast(d,goal,date,model,{});
     const end=estimate.deadline;
-    const coverage=!!end&&end.deficit===0&&end.op>=goal.score+goal.buffer&&!!estimate.reached&&estimate.reached<=goal.date&&end.liquid>=0;
-    return {share,model,estimate,end,coverage};
-  });
-  candidates.sort((a,b)=>{
+    const through=estimate.rows.filter(row=>row.date<=goal.date);
+    const liquidity=Math.max(0,-Math.min(0,...through.map(row=>row.cashFloor)));
+    const opGap=Math.max(0,loanScore(goal)+goal.buffer-(end?.op??0));
+    const coverage=!!end&&end.deficit===0&&opGap===0&&liquidity===0&&!!estimate.reached&&estimate.reached<=goal.date;
+    const contribution=sum(estimate.deposits.filter(row=>otbasy.has(row.account)&&row.date<=goal.date).map(row=>row.amount));
+    return {share,model,estimate,end,coverage,contribution,liquidity,opGap};
+  }
+  const shares=[...new Set([0,10,20,35,50,65,80,90,Math.min(90,Math.max(0,Math.round(basis.otbasyShare)))])].sort((a,b)=>a-b);
+  for(const share of shares)candidates.set(share,run(share));
+  const firstCovered=shares.findIndex(share=>candidates.get(share)?.coverage);
+  if(firstCovered>0){
+    let low=shares[firstCovered-1],high=shares[firstCovered];
+    while(high-low>1){
+      const share=Math.floor((low+high)/2);
+      const result=run(share);
+      candidates.set(share,result);
+      if(result.coverage)high=share;else low=share;
+    }
+  }
+  const ranked=[...candidates.values()].sort((a,b)=>{
     if(a.coverage!==b.coverage)return Number(b.coverage)-Number(a.coverage);
-    if(a.coverage)return (b.end?.capital??0)-(a.end?.capital??0)||a.share-b.share;
-    return (a.end?.deficit??0)-(b.end?.deficit??0)||
-      Math.max(0,goal.score+goal.buffer-(a.end?.op??0))-Math.max(0,goal.score+goal.buffer-(b.end?.op??0))||
-      (b.end?.capital??0)-(a.end?.capital??0);
+    if(a.coverage)return a.contribution-b.contribution||(b.end?.capital??0)-(a.end?.capital??0)||a.share-b.share;
+    return a.liquidity-b.liquidity||(a.end?.deficit??Infinity)-(b.end?.deficit??Infinity)||
+      a.opGap-b.opGap||a.contribution-b.contribution;
   });
-  return candidates[0];
+  return {...ranked[0],candidates:[...candidates.values()].sort((a,b)=>a.share-b.share)};
 }
 
 export function marketBasis(account:Account,entries:Entry[]){
