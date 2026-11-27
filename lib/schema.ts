@@ -21,6 +21,7 @@ const plan=z.object({id,date:z.iso.date(),items:z.array(item).max(300),status:z.
 const bonus=z.object({id,account:id,year:num.min(2000),date,eligible:amount,credited:amount,actual:amount});
 const rows=<T extends z.ZodType<{id:string}>>(s:T)=>z.array(s).max(10000).refine(xs=>new Set(xs.map(x=>x.id)).size===xs.length,'Идентификаторы записей повторяются.');
 export const settings=z.object({conservative:z.boolean().optional(),safetyDays:num.max(14).optional(),reminderTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),timeZone:z.literal('Asia/Almaty').optional(),
+monthlySavingPlan:z.record(z.iso.date(),z.record(str,amount)).optional(),
 roadmap:z.record(str,z.object({done:z.boolean().optional(),date:z.iso.date().optional()})).optional(),
 plannedSales:rows(z.object({id,account:id,date:z.iso.date(),value:amount.positive(),proceeds:amount.positive()})).optional(),
 partialMonths:z.record(z.iso.date(),z.boolean()).optional(),

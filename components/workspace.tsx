@@ -7,6 +7,7 @@ import demo from '../lib/demo.json';
 import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,entryMonth,first,forecast,goalHoldings,goalPurpose,goalShare,livingReserve,releaseLiving,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
 import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
+import {nextMonthPlan} from '../lib/month-plan';
 import {prepareReconciliation} from '../lib/reconciliation';
 import {parseInstallments} from '../lib/installments';
 import {calendarGroups} from '../lib/workspace-view';
@@ -493,6 +494,35 @@ export function Workspace(){
     M({title,fields:[f('date','Рекомендуемая дата','date'),f('done','Выполнено','boolean')],initial:{date,done},
       submit:v=>void persist({...data,settings:{...data.settings,roadmap:{...data.settings.roadmap,[id]:{date:String(v.date),done:Boolean(v.done)}}}},'План обновлён').then(ok=>{if(ok)M(null);})});
   }
+  function updateStartingCash(){
+    const accounts=data.accounts.filter(a=>a.kind==='cash');
+    if(!accounts.length){edit('accounts');return;}
+    M({title:'Сколько денег сейчас на счетах',fields:accounts.map(a=>f(a.id,a.name+' · остаток в банке, ₸','money')),
+      initial:Object.fromEntries(accounts.map(a=>[a.id,balance(a,data.transactions)])),
+      actions:<p>Укажи остаток, который видишь в банке. MyCapital запишет сверку баланса.</p>,
+      submit:v=>{
+        const corrections=accounts.flatMap(a=>{
+          const difference=Number(v[a.id])-balance(a,data.transactions);
+          if(!difference)return [];
+          const entry:Entry={id:crypto.randomUUID(),date:day,name:'Сверка остатка · '+a.name,kind:'valuation',amount:Math.abs(difference),
+            from:difference<0?a.id:'',to:difference>0?a.id:'',category:'',event:'',reservation:'',sold:0};
+          return [entry];
+        });
+        if(!corrections.length){M(null);return;}
+        void persist({...data,transactions:[...data.transactions,...corrections]},'Остатки сверены').then(ok=>{if(ok)M(null);});
+      }});
+  }
+  function editNextMonthPlan(period:string){
+    const plan=nextMonthPlan(data,day,currentForecast,period);
+    const existing=data.settings.monthlySavingPlan?.[plan.period];
+    M({title:'Пополнения на '+dayLabel(plan.period),fields:plan.savings.map(row=>f(row.id,row.name+' · план, ₸','money')),
+      initial:Object.fromEntries(plan.savings.map(row=>[row.id,existing?.[row.id]??row.suggested])),
+      actions:<p>Это твои цели на месяц. Фактический перевод добавляется отдельно после пополнения.</p>,
+      submit:v=>{
+        const monthlySavingPlan={...data.settings.monthlySavingPlan,[plan.period]:Object.fromEntries(plan.savings.map(row=>[row.id,Number(v[row.id])]))};
+        void persist({...data,settings:{...data.settings,monthlySavingPlan}},'План пополнений сохранён').then(ok=>{if(ok)M(null);});
+      }});
+  }
   function valuation(account:Account){
     const current=balance(account,data.transactions);
     M({title:account.kind==='market'?'Обновить рыночную стоимость':'Сверить текущий баланс',fields:[f('value','Новый баланс, ₸','money'),f('date','Дата сверки','date')],initial:{value:current,date:day},submit:v=>{
@@ -754,7 +784,7 @@ export function Workspace(){
       <main>
         {section==='more'&&<><div className="page-heading"><h1>Ещё</h1></div><section className="card">{nav.slice(4).filter(([id])=>id!=='goals'&&id!=='purchases').map(([id,label,Icon])=><button className="list-row" key={id} onClick={()=>go(id)}><span className="inline"><Icon size={18}/><b>{label}</b></span><ChevronRight size={16}/></button>)}</section></>}
         {section==='dashboard'&&session&&!workspace&&<section className="card"><p>Загружаем данные аккаунта.</p></section>}
-        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
+        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} updateBalance={updateStartingCash} editPlan={editNextMonthPlan} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
         {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('budget')}>Вернуться в бюджет</Button>)}{reservesPanel}</>}
         {section==='budget'&&<>
           {heading('Бюджет','Расходы и платежи на месяц.',<Button onClick={quickExpense}><Plus size={18}/> Добавить расход</Button>)}
@@ -848,8 +878,9 @@ export function Workspace(){
               const actual=sum(data.transactions.filter(t=>t.kind==='transfer'&&t.to===a.id&&entryMonth(t)===first(day)).map(t=>t.amount));
               const pending=sum(reserves.filter(i=>i.target===a.id&&(i.group==='otbasy'||i.group==='bcc')).map(i=>i.left));
               const projected=sum((currentForecast?.deposits??[]).filter(row=>row.account===a.id&&first(row.date)===first(day)).map(row=>row.amount));
-              const proposed=Math.max(pending,projected,sum(savingPlan.filter(i=>i.target===a.id).map(i=>i.amount)));
-              return <div className="list-row" key={a.id}><span><b>{a.name}</b><small>Прогноз месяца {money(actual+proposed)} · осталось {money(proposed)}</small></span><strong>Пополнено {money(actual)}</strong></div>;
+              const personalPlan=data.settings.monthlySavingPlan?.[first(day)]?.[a.id];
+              const proposed=personalPlan===undefined?Math.max(pending,projected,sum(savingPlan.filter(i=>i.target===a.id).map(i=>i.amount))):Math.max(0,personalPlan-actual);
+              return <div className="list-row" key={a.id}><span><b>{a.name}</b><small>{personalPlan===undefined?'Прогноз месяца':'Твой план'} {money(personalPlan??actual+proposed)} · осталось {money(proposed)}</small></span><strong>Пополнено {money(actual)}</strong></div>;
             })}
           </section>}
           <div className="account-list">{data.accounts.map(a=>{
