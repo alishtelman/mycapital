@@ -1,16 +1,21 @@
 'use client';
 import {useEffect,useMemo,useRef,useState,type FormEvent} from 'react';
+import dynamic from 'next/dynamic';
 import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
-import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
+import {addDays,allocation,availableForGoal,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
 import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
-import {FlowCalendar,MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
+import {MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
+import {calendarGroups} from '../lib/workspace-view';
 import {dataSchema} from '../lib/schema';
-import {Dashboard,ForecastChart,dayLabel,kinds,shortDate} from './dashboard';
+import {Dashboard,dayLabel,kinds,shortDate} from './dashboard';
 import {Blank,FormModal,field as f,select as s,type Field,type Value} from './forms';
 import {accountNames,editor,eventNames,groupNames,titles,type Entity} from './editors';
 import {Button} from './ui/button';
+
+const ForecastChart=dynamic(()=>import('./forecast-chart'));
+const FlowCalendar=dynamic(()=>import('./flow-calendar'));
 
 const url=process.env.NEXT_PUBLIC_SUPABASE_URL, key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const db=url&&key?createClient(url,key):null;
@@ -24,7 +29,7 @@ const kindNames={income:'Поступление',expense:'Расход',transfer
 const types=Object.entries(kindNames) as [Entry['kind'],string][];
 type Household={id:string;owner:string;label:string;shared:boolean};
 type Member={email:string;can_edit:boolean};
-type Modal={title:string;fields:Field[];initial:Record<string,Value>;submit:(value:Record<string,Value>)=>void;actions?:React.ReactNode};
+type Modal={title:string;fields:Field[];initial:Record<string,Value>;submit:(value:Record<string,Value>)=>void;actions?:React.ReactNode;primaryFields?:number};
 const planRows=(d:Data)=>d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.map(i=>({...i,plan:p.id,left:Math.max(0,i.amount-usedReserve(d.transactions,i.id))}))).filter(i=>i.left>0);
 const scalarFields=(value:object):Record<string,Value>=>Object.fromEntries(Object.entries(value).filter(([,v])=>['string','number','boolean'].includes(typeof v)));
 const setRow=<T extends {id:string}>(rows:T[],row:T)=>[...rows.filter(x=>x.id!==row.id),row];
@@ -66,7 +71,9 @@ export function Workspace(){
   const [section,S]=useState('dashboard');
   const [day,setDay]=useState('2026-11-27');
   const [pointer,setPointer]=useState('2026-11-01');
-  const [mode,setMode]=useState<'month'|'list'>('month');
+  const [mode,setMode]=useState<'month'|'list'>('list');
+  const [eventFilter,setEventFilter]=useState<'all'|Event['kind']>('all');
+  const [showFlow,setShowFlow]=useState(false);
   const [theme,setTheme]=useState(false);
   const [mobile,setMobile]=useState(false);
   const [notice,N]=useState('');
@@ -211,7 +218,7 @@ export function Workspace(){
       }
       void persist(next).then(ok=>{if(ok)M(null);});
     }
-    M({title:rule?'Правило обязательного платежа':'Новый обязательный платёж',fields,initial,
+    M({title:rule?'Правило обязательного платежа':'Новый обязательный платёж',fields,initial,primaryFields:4,
       actions:rule&&<><Button variant="outline" onClick={()=>remove(true)}>Архивировать</Button><Button variant="outline" onClick={()=>remove(false)}>Удалить правило</Button></>,
       submit:v=>{
         const dates=String(v.dates).split(',').map(x=>x.trim()).filter(Boolean);
@@ -239,27 +246,33 @@ export function Workspace(){
       void persist({...data,events:setRow(data.events,event),plans:[...data.plans,plan]},'Резерв создан').then(ok=>{if(ok)M(null);});
     }});
   }
+  function quickIncome(){
+    const account=data.accounts.find(a=>a.kind==='cash')??data.accounts.find(a=>a.kind!=='market');
+    if(!account){N('Сначала добавьте денежный счёт.');go('accounts');return;}
+    const sources=calendar(data,month(day,-1),month(day,2)).filter(e=>e.kind==='income'&&remainingEvent(e,data.transactions)>0);
+    M({title:'Получил деньги',fields:[s('source','Источник поступления',[...sources.map(e=>[e.id,e.name+' · '+shortDate(e.date)] as [string,string]),['other','Другое поступление']]),f('amount','Фактическая сумма, ₸','money')],
+      initial:{source:sources.find(e=>e.date===day)?.id??'other',amount:0},actions:<Button variant="ghost" onClick={()=>operation('income')}>Все поля</Button>,
+      submit:v=>{
+        const event=sources.find(e=>e.id===v.source);
+        const amount=Number(v.amount);
+        commitEntry({id:crypto.randomUUID(),kind:'income',name:event?.name??'Поступление',date:day,amount,from:'',to:account.id,category:'',event:event?.id??'',reservation:'',sold:0},event);
+      }});
+  }
   function quickExpense(){
     const account=data.accounts.find(a=>a.kind==='cash');
-    if(!account){N('Добавьте счёт свободных денег.');return;}
-    const templates=['Продукты','Бензин','Кафе','Свидание','Одежда','Подписка','Непредвиденное'];
-    const open=(template='')=>{
-      const detected=data.categories.find(c=>c.name.toLowerCase().includes(template.toLowerCase().slice(0,-1)));
-      M({title:'Быстрый расход',fields:[f('amount','Сумма, ₸','money'),s('category','Категория',data.categories.map(c=>[c.id,c.name]),true),f('comment','Комментарий','text',true)],
-        initial:{amount:0,category:template?detected?.id??'':'',comment:'',template},
-        actions:<div className="quick">{templates.map(t=><Button key={t} variant="outline" onClick={()=>open(t)}>{t}</Button>)}<Button variant="ghost" onClick={()=>operation('expense')}>Все поля</Button></div>,
-        submit:v=>{
-          const category=String(v.category);
-          const entry:Entry={id:crypto.randomUUID(),kind:'expense',date:day,amount:Number(v.amount),from:account.id,to:'',category,
-            name:template||data.categories.find(c=>c.id===category)?.name||'Повседневный расход',comment:String(v.comment),event:'',reservation:'',sold:0};
-          commitEntry(category?withPaymentReserves(data,entry,category):entry);
-        }});
-    };
-    open();
+    if(!account){N('Добавьте счёт свободных денег.');go('accounts');return;}
+    M({title:'Добавить расход',fields:[f('amount','Сумма, ₸','money'),s('category','Категория',data.categories.map(c=>[c.id,c.name]),true)],
+      initial:{amount:0,category:''},actions:<Button variant="ghost" onClick={()=>operation('expense')}>Все поля</Button>,
+      submit:v=>{
+        const category=String(v.category);
+        const entry:Entry={id:crypto.randomUUID(),kind:'expense',date:day,amount:Number(v.amount),from:account.id,to:'',category,
+          name:data.categories.find(c=>c.id===category)?.name||'Повседневный расход',comment:'',event:'',reservation:'',sold:0};
+        commitEntry(category?withPaymentReserves(data,entry,category):entry);
+      }});
   }
   function assessPurchase(id?:string){
     const existing=data.purchases.find(p=>p.id===id);
-    M({title:'Могу ли я себе это позволить?',initial:{amount:existing?.amount??0,date:existing?.date??day,name:existing?.name??'Незапланированная покупка'},
+    M({title:'Хочу купить',initial:{amount:existing?.amount??0,date:existing?.date??day,name:existing?.name??'Незапланированная покупка'},
       fields:[f('name','Покупка'),f('amount','Стоимость, ₸','money'),f('date','Плановая дата','date')],submit:v=>{
         if(Number(v.amount)<=0||String(v.date)<day){N('Укажите стоимость и сегодняшнюю или будущую дату.');return;}
         M(null);setPurchase({id,amount:Number(v.amount),date:String(v.date),name:String(v.name)});
@@ -424,7 +437,7 @@ export function Workspace(){
     const baseline=allocation(data,day,data.scenarios.find(s=>s.id===scenario));
     if(baseline.some(i=>i.group==='living'&&i.amount>(draft.find(j=>j.id===i.id)?.amount??0))
       &&!window.confirm('Вы уменьшили резерв на комфортный минимум. Подтвердить исключение для этого распределения?'))return;
-    void persist({...data,plans:[...data.plans,{id:crypto.randomUUID(),date:day,items:allocated,status:'accepted'}]},'Распределение принято').then(ok=>{if(ok){setDraft(null);go('budget');}});
+    void persist({...data,plans:[...data.plans,{id:crypto.randomUUID(),date:day,items:allocated,status:'accepted'}]},'Распределение принято').then(ok=>{if(ok){setDraft(null);go('checklist');}});
   }
 
   async function auth(e:FormEvent<HTMLFormElement>){
@@ -506,6 +519,9 @@ export function Workspace(){
   const alerts=useMemo(()=>reminders(data,day,clock),[data,day,clock]);
   const rankedDebt=useMemo(()=>nextDebt(data),[data]);
   const debtRate=Math.max(0,...data.accounts.filter(a=>a.kind==='bcc').map(a=>a.rate));
+  const monthPayments=useMemo(()=>calendar(data,first(day),month(first(day),1)).filter(e=>e.kind==='expense'&&e.date<month(first(day),1)&&e.status!=='canceled'&&!e.id.startsWith('purchase@')).map(event=>({event,...paymentState(data,event,day)})),[data,day]);
+  const savingPlan=useMemo(()=>section==='accounts'?allocation(data,day,activeScenario).filter(item=>item.group==='otbasy'||item.group==='bcc'):[],[section,data,day,activeScenario]);
+  const visibleEvents=currentEvents.filter(e=>e.kind!=='notice'&&(eventFilter==='all'||e.kind===eventFilter));
   const current=nav.find(n=>n[0]===section);
   const toggleTheme=()=>{localStorage.setItem('theme',theme?'light':'dark');setTheme(!theme);};
   const heading=(title:string,description:string,action?:React.ReactNode)=><div className="page-heading"><div><h1>{title}</h1><p>{description}</p></div>{action}</div>;
@@ -518,29 +534,49 @@ export function Workspace(){
       void persist({...data,settings:{...data.settings,priority}}).then(ok=>{if(ok)M(null);});
     }});
   };
+  const reservesPanel=<section className="card"><div className="section-head"><div><h2>Что осталось сделать</h2><p>Отложено {money(reserved(data))}. Подтвердите оплату или перевод после выполнения.</p></div><ShieldCheck size={22}/></div>
+              {!reserves.length&&<Blank>Здесь появятся позиции после принятия распределения.</Blank>}
+              {reserves.map(i=>row(i.name,groupNames[i.group]??i.reason,money(i.left),()=>{
+                const item={...i,amount:i.left};
+                const event=['bills','purchases'].includes(i.group)?calendar(data,month(day,-12),month(day,36)).find(e=>e.id===i.target):undefined;
+                if(event){operation('expense',event);return;}
+                operation(['otbasy','bcc','reserve'].includes(i.group)?'transfer':'expense',undefined,item);
+              }))}
+              {data.plans.filter(p=>p.status==='accepted'&&reserves.some(i=>i.plan===p.id)).map(p=><Button key={p.id} variant="outline" disabled={busy} onClick={()=>release(p)}>Освободить резерв от {shortDate(p.date)}</Button>)}
+            </section>;
   return <div className="shell">
     <aside className={'sidebar '+(mobile?'opened':'')}>
       <button className="brand" onClick={()=>go('dashboard')}><span className="brand-icon"><ChartNoAxesCombined size={20}/></span><span>MyCapital</span></button>
-      <div className="nav-label">Рабочее пространство</div>
-      <nav>{nav.map(([id,label,Icon])=><button key={id} className={section===id?'active':''} onClick={()=>go(id)} aria-current={section===id?'page':undefined}><Icon size={18}/><span>{label}</span></button>)}</nav>
+      <nav className="primary-nav" aria-label="Разделы">{nav.slice(0,4).map(([id,label,Icon])=><button key={id} className={section===id?'active':''} onClick={()=>go(id)} aria-current={section===id?'page':undefined}><Icon size={18}/><span>{label}</span></button>)}
+        <button className={section==='more'||nav.slice(4).some(([id])=>id===section)?'active':''} onClick={()=>go('more')} aria-current={section==='more'?'page':undefined}><Menu size={18}/><span>Ещё</span></button>
+      </nav>
       <div className="side-bottom"><button className="profile" onClick={()=>session?go('settings'):A('login')}><span className="avatar">{session?.user.email?.slice(0,2).toUpperCase()??'MC'}</span><span><b>{session?'Мой аккаунт':'Личный бюджет'}</b><small>{session?.user.email??'Демонстрационный режим'}</small></span><ChevronDown size={15}/></button></div>
     </aside>
     {mobile&&<button className="backdrop" aria-label="Закрыть меню" onClick={()=>setMobile(false)}/>}
     <div className="workspace">
-      <header className="topbar"><div><Button variant="ghost" className="mobile-menu" onClick={()=>setMobile(true)} aria-label="Меню"><Menu size={22}/></Button><b>{current?.[1]}</b></div><div>
+      <header className="topbar"><div><Button variant="ghost" className="mobile-menu" onClick={()=>setMobile(true)} aria-label="Меню"><Menu size={22}/></Button><b>{current?.[1]??(section==='checklist'?'План принят':'Ещё')}</b></div><div>
         <Button variant="ghost" aria-label="Уведомления" onClick={()=>setInbox(true)}><Bell size={19}/>{alerts.length>0&&<span className="alert-count">{alerts.length}</span>}</Button>
         <span className="currency"><span/> KZT</span>
         <Button variant="ghost" onClick={toggleTheme} aria-label={theme?'Светлая тема':'Тёмная тема'}>{theme?<Sun size={19}/>:<Moon size={19}/>}</Button>
         {(!db||settled)&&(!session?<Button variant="outline" onClick={()=>A('login')}>Войти</Button>:<Button variant="ghost" onClick={()=>void db?.auth.signOut()} aria-label="Выйти"><LogOut size={19}/></Button>)}
       </div></header>
       <main>
+        {section==='more'&&<><div className="page-heading"><h1>Ещё</h1></div><section className="card">{nav.slice(4).filter(([id])=>id!=='goals'&&id!=='purchases').map(([id,label,Icon])=><button className="list-row" key={id} onClick={()=>go(id)}><span className="inline"><Icon size={18}/><b>{label}</b></span><ChevronRight size={16}/></button>)}</section></>}
         {section==='dashboard'&&session&&!workspace&&<section className="card"><p>Загружаем данные аккаунта.</p></section>}
-        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} operation={operation} plan={()=>openPlan()} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} buy={()=>assessPurchase()} expense={quickExpense} report={()=>setShowReport(true)}/>}/>}
+        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} income={()=>quickIncome()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} buy={()=>assessPurchase()} expense={quickExpense} report={()=>setShowReport(true)}/>}/>}
+        {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('budget')}>Вернуться в бюджет</Button>)}{reservesPanel}</>}
         {section==='budget'&&<>
-          {heading('Бюджет','Планируйте расходы на месяц и подтверждайте распределение поступлений.',<Button onClick={()=>openPlan()}><Sparkles size={18}/> Распределить {money(Math.max(0,cash(data)-reserved(data)))}</Button>)}
+          {heading('Бюджет','Расходы и платежи на месяц.',<Button onClick={quickExpense}><Plus size={18}/> Добавить расход</Button>)}
+          <div className="quick"><Button variant="outline" onClick={()=>go('purchases')}>Планы и покупки</Button><Button variant="outline" onClick={()=>openPlan()}>Распределить деньги</Button></div>
           <section className="card"><div className="section-head"><div><h2>Обязательные платежи</h2><p>Даты, суммы и напоминания</p></div><Button onClick={()=>editPayment()}><Plus size={18}/> Новый платёж</Button></div>
-            {data.rules.filter(r=>r.kind==='expense').map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>editPayment(r)))}
-            <Button variant="outline" onClick={()=>setShowReport(true)}>Закрытие и отчёт за месяц</Button>
+            <p>Всего {money(sum(monthPayments.map(p=>p.actual+p.remaining+(p.event.status==='settled_before_tracking'?p.event.amount:0))))} · оплачено {money(sum(monthPayments.map(p=>p.actual+(p.event.status==='settled_before_tracking'?p.event.amount:0))))} · осталось {money(sum(monthPayments.map(p=>p.remaining)))} · отложить {money(sum(monthPayments.map(p=>p.missing)))}</p>
+            {monthPayments.map(p=><div className="action-row" key={p.event.id}>
+              {row(p.event.name,shortDate(dueDate(p.event))+' · '+p.label,money(p.event.amount),()=>eventEditor(p.event))}
+              {p.remaining>0&&<Button variant="outline" onClick={()=>operation('expense',p.event)}>Оплатил</Button>}
+            </div>)}
+            {!monthPayments.length&&<Blank>В этом месяце нет платежей с датой.</Blank>}
+            <details><summary>Правила и платежи без даты</summary>{data.rules.filter(r=>r.kind==='expense').map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>editPayment(r)))}</details>
+            <Button variant="ghost" onClick={()=>setShowReport(true)}>Отчёт за месяц</Button>
           </section>
           <div className="split">
             <section className="card"><div className="section-head"><div><h2>На жизнь</h2><p>{dayLabel(day)}</p></div>{add('categories','Категория')}</div>
@@ -551,7 +587,7 @@ export function Workspace(){
                 const left=budget-spent;
                 const {changes:cuts}=budgetCuts(data,day,Math.max(0,-left),c.id);
                 return <div className="budget-item" key={c.id}>
-                  {row(c.name,'Минимум '+money(c.minimum)+' · резерв '+money(reserved(data,c.id)),money(budget),()=>edit('categories',c))}
+                  {row(c.name,'Выделено',money(budget),()=>edit('categories',c))}
                   <div className="progress"><div style={{width:Math.min(100,budget?100*spent/budget:0)+'%'}} className={left<0?'over':''}/></div>
                   <div className="subline"><span>Потрачено {money(spent)}</span><span className={left<0?'loss':''}>{left>=0?'Осталось ':'Перерасход '}{money(Math.abs(left))}</span></div>
                   {left<0&&cuts.length>0&&<p className="budget-tip">Можно перераспределить {cuts.map(x=>x.category.name+' · '+money(x.amount)).join(', ')}. <Button variant="outline" disabled={busy} onClick={()=>{
@@ -565,43 +601,45 @@ export function Workspace(){
                 </div>;
               })}
             </section>
-            <section className="card"><div className="section-head"><div><h2>Резервы</h2><p>{money(reserved(data))} из свободных денег</p></div><ShieldCheck size={22}/></div>
-              {!reserves.length&&<Blank>Здесь появятся позиции после принятия распределения.</Blank>}
-              {reserves.map(i=>row(i.name,i.reason,money(i.left),()=>{
-                const item={...i,amount:i.left};
-                const event=['bills','purchases'].includes(i.group)?calendar(data,month(day,-12),month(day,36)).find(e=>e.id===i.target):undefined;
-                if(event){operation('expense',event);return;}
-                operation(['otbasy','bcc','reserve'].includes(i.group)?'transfer':'expense',undefined,item);
-              }))}
-              {data.plans.filter(p=>p.status==='accepted'&&reserves.some(i=>i.plan===p.id)).map(p=><Button key={p.id} variant="outline" disabled={busy} onClick={()=>release(p)}>Освободить резерв от {shortDate(p.date)}</Button>)}
-            </section>
+            {reservesPanel}
+
           </div>
         </>}
         {section==='calendar'&&<>
           {heading('Финансовый календарь','Отслеживайте поступления, платежи и важные даты.',add('events','Добавить событие'))}
-          <FlowCalendar data={data} date={day} next={wallet.end} open={eventEditor}/>
-          <section className="card"><div className="section-head calendar-controls"><div className="inline"><Button variant="outline" aria-label="Предыдущий месяц" onClick={()=>setPointer(month(pointer,-1))}><ChevronLeft size={18}/></Button><h2>{dayLabel(pointer)}</h2><Button variant="outline" aria-label="Следующий месяц" onClick={()=>setPointer(month(pointer,1))}><ChevronRight size={18}/></Button></div><div className="inline"><Button variant={mode==='month'?'default':'outline'} onClick={()=>setMode('month')}>Месяц</Button><Button variant={mode==='list'?'default':'outline'} onClick={()=>setMode('list')}>Список</Button><Button variant="outline" onClick={()=>exportCalendar(data,pointer)}>Экспорт ICS</Button></div></div>
+
+          <section className="card"><div className="section-head calendar-controls"><div className="inline"><Button variant="outline" aria-label="Предыдущий месяц" onClick={()=>setPointer(month(pointer,-1))}><ChevronLeft size={18}/></Button><h2>{dayLabel(pointer)}</h2><Button variant="outline" aria-label="Следующий месяц" onClick={()=>setPointer(month(pointer,1))}><ChevronRight size={18}/></Button></div><div className="inline"><select aria-label="Вид событий" value={eventFilter} onChange={e=>setEventFilter(e.target.value as typeof eventFilter)}><option value="all">Все</option><option value="income">Доходы</option><option value="expense">Расходы</option><option value="saving">Накопления</option></select><Button variant={mode==='month'?'default':'outline'} onClick={()=>setMode('month')}>Месяц</Button><Button variant={mode==='list'?'default':'outline'} onClick={()=>setMode('list')}>Список</Button><Button variant="outline" onClick={()=>exportCalendar(data,pointer)}>Экспорт ICS</Button></div></div>
           {mode==='month'?<div className="month-grid">
             {['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(x=><div className="weekday" key={x}>{x}</div>)}
             {Array.from({length:(new Date(pointer+'T00:00:00Z').getUTCDay()+6)%7},(_,i)=><div className="calendar-empty" key={'empty'+i}/>)}
             {Array.from({length:days(pointer,month(pointer,1))},(_,i)=>{
               const date=pointer.slice(0,8)+String(i+1).padStart(2,'0');
-              return <div className={'calendar-cell '+(date===day?'current-date':'')} key={date}><span>{i+1}</span>{currentEvents.filter(e=>e.date===date).map(e=><button key={e.id} title={e.name} className={'event-chip '+e.kind+' '+e.status} onClick={()=>eventEditor(e)}>{e.name}</button>)}</div>;
+              return <div className={'calendar-cell '+(date===day?'current-date':'')} key={date}><span>{i+1}</span>{visibleEvents.filter(e=>e.date===date).map(e=><button key={e.id} title={e.name} className={'event-chip '+e.kind+' '+e.status} onClick={()=>eventEditor(e)}>{e.name}</button>)}</div>;
             })}
-          </div>:currentEvents.length?currentEvents.map(e=>{
+          </div>:visibleEvents.length?(pointer===first(day)?calendarGroups(visibleEvents,day,wallet.income?wallet.end:undefined):[{label:'События месяца',events:visibleEvents}]).map(group=>group.events.length>0&&<section className="calendar-group" key={group.label}><h3>{group.label}</h3>{group.events.map(e=>{
             const status=e.kind==='expense'?paymentState(data,e,day):null;
-            return row(e.name,shortDate(e.date)+' · '+(status?.label??eventNames[e.status])+(status?.actual?' · план '+money(e.amount)+' · оплачено '+money(status.actual):''),
+            return row(e.name,shortDate(e.date)+' · '+(status?.label??eventNames[e.status]),
               status?.actual?money(status.actual):e.amount?money(e.amount):'—',()=>eventEditor(e));
-          }):<Blank>В этом месяце нет событий.</Blank>}
+          })}</section>):<Blank>В этом месяце нет событий.</Blank>}
           </section>
-          <section className="card"><div className="section-head"><div><h2>Регулярные события</h2><p>Укажите даты для платежей и поступлений без расписания.</p></div>{add('rules','Правило')}</div>
+          <details className="card" onToggle={e=>setShowFlow(e.currentTarget.open)}><summary>Прогноз денежных потоков</summary>{showFlow&&<FlowCalendar data={data} date={day} next={wallet.end} open={eventEditor}/>}</details>
+          <details className="card"><summary>Настройки регулярных событий</summary><div className="section-head"><div><h2>Регулярные события</h2><p>Укажите даты для платежей и поступлений без расписания.</p></div>{add('rules','Правило')}</div>
             {data.rules.map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>r.kind==='expense'?editPayment(r):edit('rules',scalarFields(r))))}
-          </section>
+          </details>
         </>}
         {section==='accounts'&&<>
           {heading('Счета и накопления','Денежные счета, депозиты и рыночные активы.',add('accounts','Добавить счёт'))}
+          <section className="card"><div className="section-head"><div><h2>Моя цель</h2><p>{goal?.name??'Добавьте финансовую цель'}</p>{goal&&<p>Осталось {money(Math.max(0,downPayment(goal)+goal.reserve-sum(data.accounts.filter(a=>availableForGoal(a,goal.date)).map(a=>balance(a,data.transactions)))))} · {currentForecast?.reached?dayLabel(currentForecast.reached):'Дата пока не определена'}</p>}</div><Button variant="outline" onClick={()=>go('goals')}>Подробнее</Button></div></section>
           <div className="quick"><Button variant="outline" onClick={()=>operation('transfer')}><ArrowLeftRight size={17}/> Перевод</Button><Button variant="outline" onClick={()=>operation('sale')}>Продажа актива</Button>{add('bonuses','Госпремия')}</div>
-          <div className="account-grid">{data.accounts.map(a=>{
+          {data.accounts.some(a=>a.kind==='otbasy'||a.kind==='bcc')&&<section className="card"><h2>Пополнения в этом месяце</h2>
+            {data.accounts.filter(a=>a.kind==='otbasy'||a.kind==='bcc').map(a=>{
+              const actual=sum(data.transactions.filter(t=>t.kind==='transfer'&&t.to===a.id&&t.date>=first(day)&&t.date<month(first(day),1)).map(t=>t.amount));
+              const pending=sum(reserves.filter(i=>i.target===a.id&&(i.group==='otbasy'||i.group==='bcc')).map(i=>i.left));
+              const proposed=sum(savingPlan.filter(i=>i.target===a.id).map(i=>i.amount));
+              return <div className="list-row" key={a.id}><span><b>{a.name}</b><small>{pending>0?'Осталось по принятому плану '+money(pending):proposed>0?'Рекомендация из текущего остатка '+money(proposed):'Нет запланированного пополнения'}</small></span><strong>Пополнено {money(actual)}</strong></div>;
+            })}
+          </section>}
+          <div className="account-list">{data.accounts.map(a=>{
             const amount=balance(a,data.transactions), Icon=kinds[a.kind];
             const basis=marketBasis(a,data.transactions);
             const interest=a.interest||Math.round(a.score*a.contract/1000);
@@ -609,8 +647,7 @@ export function Workspace(){
             const horizon=goal?Math.max(0,days(day,goal.date)):0;
             const mrp=data.settings.mrp[day.slice(0,4)]??0;
             const cashYield=depositYield(amount,a.rate,91,true);
-            return <section className="card account-card" key={a.id}><div className="section-head"><div className="icon-soft"><Icon size={20}/></div><span className="pill">{accountNames[a.kind]}</span></div>
-              <h2>{a.name}</h2><strong className="large">{money(amount)}</strong>
+            return <details className="card account-card" key={a.id}><summary><Icon size={18}/><b>{a.name}</b><strong>{money(amount)}</strong></summary><p>{accountNames[a.kind]}</p>
               <p>{a.owner||'Владелец не указан'}</p>
               {a.kind==='market'&&<dl><dt>Сумма вложений</dt><dd>{a.basis?money(basis):'Укажите'}</dd><dt>Прибыль / убыток</dt><dd>{a.basis?money(amount-basis):'—'}</dd><dt>Оценка чистой продажи</dt><dd>{money(Math.round(amount*(1-a.fee/100)))}</dd></dl>}
               {a.kind==='bcc'&&<dl><dt>ГЭСВ</dt><dd>{a.rate}%</dd><dt>Номинальная ставка</dt><dd>{a.nominal?a.nominal+'%':'Укажите'}</dd><dt>Срок и продление</dt><dd>{a.termMonths?a.termMonths+' мес.':'Срок не указан'} · {a.rollover?'авто':'вручную'}</dd><dt>Окончание</dt><dd>{shortDate(a.maturity)}</dd><dt>Доход за 3 / 6 / 12 мес.</dt><dd>{[cashYield,depositYield(amount,a.rate,182,true),depositYield(amount,a.rate,365,true)].map(money).join(' / ')}</dd><dt>Потеря при раннем закрытии, оценка</dt><dd>{a.opened?money(Math.max(0,depositYield(amount,a.rate,days(a.opened,day),true)-depositYield(amount,a.earlyRate,days(a.opened,day)))):'Укажите дату открытия'}</dd></dl>}
@@ -618,7 +655,7 @@ export function Workspace(){
                 <dt>Дней до целевого ОП на текущем балансе</dt><dd>{amount&&a.rate?Math.ceil(Math.max(0,goal.score*future/1000-interest)*36500/(amount*a.rate)):'—'}</dd></>}
                 <dt>Остаток годового лимита</dt><dd>{mrp?money(Math.max(0,mrp*200-Math.max(0,a.eligible-a.awarded))):'Укажите МРП'}</dd><dt>Ожидаемая госпремия</dt><dd>{mrp?money(bonus(a.eligible,mrp,a.awarded)):'—'}</dd></dl>}
               <div className="quick"><Button variant="outline" onClick={()=>edit('accounts',a)}>Изменить</Button><Button variant="ghost" onClick={()=>valuation(a)}>{a.kind==='market'?'Переоценка':'Сверить баланс'}</Button><Button variant="ghost" onClick={()=>{setAccountHistory(a.id);go('history');}}>Операции</Button></div>
-            </section>;
+            </details>;
           })}</div>
           {!data.accounts.length&&<Blank>Добавьте счёт или загрузите начальный профиль в настройках.</Blank>}
           {data.accounts.some(a=>a.kind==='otbasy')&&<section className="card"><h2>Семейный пакет Отбасы</h2><p>Расчётный ОП может отличаться от показателя банка. Сверяйте договорную сумму, вознаграждение и условия объединения.</p><p>Прогноз к дате цели · ОП <b>{currentForecast?.deadline?.op.toFixed(2)??'—'}</b></p>
@@ -633,16 +670,16 @@ export function Workspace(){
         </>}
         {section==='debts'&&<>
           {heading('Кредиты и рассрочки','Остатки, графики и оценка досрочного погашения.',add('debts','Добавить долг'))}
-          {rankedDebt.length>0&&<section className="card"><h2>Какую рассрочку закрыть следующей</h2>
+          {rankedDebt.length>0&&<details className="card"><summary>Сравнить досрочное погашение</summary>
             <p>{rankedDebt[0].comparison.net>0?'Лидер по расчётной выгоде: '+rankedDebt[0].loan.name:'По заданной ставке вклада досрочное закрытие не даёт положительной расчётной выгоды.'}</p>
             {rankedDebt.map(({loan,comparison})=>row(loan.name,'Экономия '+money(comparison.saved)+' · проценты вклада '+money(comparison.lost)+' · платёж '+money(loan.payment),money(comparison.net),()=>operation('expense',undefined,undefined,undefined,{name:'Досрочно · '+loan.name,amount:loan.balance,category:loan.id})))}
-          </section>}
+          </details>}
           {!data.debts.length&&<Blank>У вас нет добавленных обязательств.</Blank>}
           {data.debts.map(original=>{
             const loan=effectiveDebt(original,data), payments=schedule(loan), check=debtComparison(loan,debtRate);
             return <section className="card" key={loan.id}><div className="section-head"><div><h2>{loan.name}</h2><p>{loan.confirmed?shortDate(loan.date):'Подтвердите исходные данные'}</p></div><strong className="large">{money(loan.balance)}</strong></div>
-              <p>Платёж {money(loan.payment)} · ставка {loan.rate}% · ГЭСВ {loan.apr}%</p>
-              {payments.length>0&&<p>При закрытии сейчас: экономия процентов {money(check.saved)}, оценка упущенного дохода {money(check.lost)}. Освободится {money(loan.payment)} в месяц.</p>}
+              <p>Платёж {money(loan.payment)} в месяц{payments.length>0?' · до '+shortDate(payments.at(-1)!.date)+' '+payments.at(-1)!.date.slice(0,4):''}</p>
+              {payments.length>0&&<><p>{check.net>0?'При закрытии освободится '+money(loan.payment)+' в месяц.':'По текущим ставкам выгоднее платить по графику.'}</p><details><summary>Условия и расчёт</summary><p>Ставка {loan.rate}% · ГЭСВ {loan.apr}%</p><p>Экономия процентов {money(check.saved)} · упущенный доход {money(check.lost)}.</p></details></>}
               {!loan.balance&&<p>Долг закрыт. Запустите помощник, чтобы направить свободные деньги на накопления.</p>}
               <div className="quick"><Button variant="outline" onClick={()=>edit('debts',original)}>Настроить</Button>{loan.balance>0&&loan.confirmed&&<Button variant="outline" onClick={()=>operation('expense',undefined,undefined,undefined,{name:'Досрочно · '+loan.name,category:loan.id,amount:loan.balance})}>Погасить досрочно</Button>}</div>
               {payments.length>0&&<details><summary>График · {payments.length} платежей</summary><div className="schedule">{payments.map(p=><div className="schedule-row" key={p.date}><span>{shortDate(p.date)} {p.date.slice(0,4)}</span><b>{money(p.amount)}</b><span>Проценты {money(p.interest)}</span><span>Остаток {money(p.remaining)}</span></div>)}</div></details>}
@@ -669,14 +706,14 @@ export function Workspace(){
             const plannedExpense=sum(events.filter(e=>e.kind==='expense').map(e=>e.amount))+sum(data.categories.map(c=>categoryBudget(data,c,period)));
             return <p key={period}><b>{dayLabel(period)}</b> · доходы {money(sum(tx.filter(t=>t.kind==='income').map(t=>t.amount)))} / {money(plannedIncome)} · расходы {money(sum(tx.filter(t=>t.kind==='expense').map(t=>t.amount)))} / {money(plannedExpense)}</p>;
           })}</section></>:<Blank>Задайте активную цель, чтобы построить прогноз.</Blank>}
-          <section className="card"><div className="section-head"><h2>Сравнение сценариев</h2>{goal&&<Button variant="outline" onClick={()=>setOptimized(!optimized)}>{optimized?'Скрыть подбор':'Подобрать распределение'}</Button>}</div>
+          <details className="card"><summary>Сравнить сценарии</summary><div className="section-head"><h2>Сценарии</h2>{goal&&<Button variant="outline" onClick={()=>setOptimized(!optimized)}>{optimized?'Скрыть подбор':'Подобрать распределение'}</Button>}</div>
             {recommendation&&<div className="budget-tip"><b>{recommendation.coverage?'Найден сценарий с нужным взносом, подушкой и запасом по ОП':'Использованные сценарии не закрывают все условия к желаемой дате'}</b><p>Доля для раннего пополнения Отбасы · {recommendation.share}% · ОП {recommendation.end?.op.toFixed(2)} · дефицит {money(recommendation.end?.deficit??0)}</p>
             <Button variant="outline" onClick={()=>edit('scenarios',{...recommendation.model,id:crypto.randomUUID(),name:'Подбор накоплений'})}>Сохранить как сценарий</Button></div>}
             {data.scenarios.map(x=>{
             const prediction=goal?forecast(data,goal,day,x):null;
             const end=prediction?.deadline;
             return row(x.name,end?'ОП '+end.op.toFixed(2)+' · подушка '+money(end.reserves)+' · проценты '+money(end.interest)+' · премия '+money(end.bonus):'Настройки сценария',prediction?.reached?dayLabel(prediction.reached):end?'Дефицит '+money(end.deficit):'—',()=>edit('scenarios',x));
-          })}</section>
+          })}</details>
         </>}
         {section==='history'&&<>
           {heading('История операций','Фактические поступления, платежи, переводы и переоценка.',<Button onClick={()=>operation('income')}><Plus size={18}/> Получил деньги</Button>)}
@@ -692,7 +729,7 @@ export function Workspace(){
           </div>)}</section>
         </>}
         {section==='purchases'&&<>
-          {heading('Планы и покупки','Будущие покупки учитываются в прогнозе и бюджете до оплаты.',add('purchases','Новая покупка'))}
+          {heading('Планы и покупки','Будущие покупки учитываются в прогнозе и бюджете до оплаты.',<Button onClick={()=>assessPurchase()}>Хочу купить</Button>)}
           <section className="card">{!data.purchases.length&&<Blank>Добавьте покупку, чтобы увидеть её влияние на накопления.</Blank>}{data.purchases.map(p=>{
             const event=calendar(data,month(day,-12),month(day,36)).find(e=>e.id==='purchase@'+p.id);
             const date=event?.date??p.date;
@@ -735,7 +772,7 @@ export function Workspace(){
         </>}
       </main>
     </div>
-    <nav className="bottom-nav" aria-label="Основное меню">{nav.slice(0,4).map(([id,label,Icon])=><button key={id} className={section===id?'active':''} onClick={()=>go(id)}><Icon size={21}/>{label}</button>)}<button onClick={()=>setMobile(true)}><Menu size={21}/>Ещё</button></nav>
+    <nav className="bottom-nav" aria-label="Основное меню">{nav.slice(0,4).map(([id,label,Icon])=><button key={id} className={section===id?'active':''} onClick={()=>go(id)}><Icon size={21}/>{label}</button>)}<button className={section==='more'||nav.slice(4).some(([id])=>id===section)?'active':''} onClick={()=>go('more')}><Menu size={21}/>Ещё</button></nav>
     {notice&&<div className="toast" role="status"><span>{notice}</span><button aria-label="Скрыть уведомление" onClick={()=>N('')}>×</button></div>}
     {inbox&&!modal&&<Notifications data={data} date={day} clock={clock} close={()=>setInbox(false)} open={eventEditor} busy={busy} mark={(id,snooze)=>void persist({...data,settings:{...data.settings,notifications:{...data.settings.notifications,[id]:snooze?{until:addDays(day,1)}:{read:true}}}},snooze?'Напоминание отложено':'Уведомление прочитано')}/>}
     {showReport&&!modal&&<MonthReport data={data} day={day} close={()=>setShowReport(false)} closeMonth={closeMonth}/>}
@@ -755,12 +792,16 @@ export function Workspace(){
     {modal&&<FormModal key={modal.title+String(modal.initial.template??modal.initial.category??'')} {...modal} busy={busy} close={()=>M(null)}>{modal.actions&&<div className="quick">{modal.actions}</div>}</FormModal>}
     {draft&&!modal&&<div className="overlay" onClick={()=>setDraft(null)}><section className="dialog" role="dialog" aria-modal="true" aria-label="Финансовый помощник" onClick={e=>e.stopPropagation()}>
       <div className="dialog-header"><div><div className="icon-soft"><Sparkles size={20}/></div><h2>Распределение средств</h2></div><Button variant="ghost" aria-label="Закрыть" onClick={()=>setDraft(null)}>×</Button></div>
-      <p>Фактический остаток {money(cash(data))} · уже зарезервировано {money(reserved(data))}.</p>
+      <details><summary>Почему именно так?</summary><p>Фактический остаток {money(cash(data))} · уже зарезервировано {money(reserved(data))}.</p>
       <p>Обязательные платежи {money(wallet.obligations)} · покупки {money(wallet.planned)} · на жизнь {money(wallet.forLife)} · можно отложить {money(wallet.save)}.</p>
-      <p>{wallet.income?'Следующий доход '+shortDate(wallet.end):'Расчёт на '+wallet.horizon+' дн.'}{wallet.shortage?' · дефицит обязательных платежей '+money(wallet.shortage):''}.</p>
+      <p>{wallet.income?'Следующий доход '+shortDate(wallet.end):'Расчёт на '+wallet.horizon+' дн.'}{wallet.shortage?' · дефицит обязательных платежей '+money(wallet.shortage):''}.</p></details>
       <p>{received>0?'Получено '+money(received)+' · ':''}Доступно {money(Math.max(0,cash(data)-reserved(data)))}</p>
       {draft.length===0&&<Blank>Свободных средств для распределения пока нет.</Blank>}
-      {draft.filter(i=>i.group!=='free'||!editingDraft).map((i)=><div className="list-row" key={i.id}><span><b>{i.name}</b><small>{i.reason}</small></span>
+      {received>0&&!editingDraft&&<div>{Object.entries(groupNames).map(([group,label])=>{
+        const amount=sum(draft.filter(i=>i.group===group).map(i=>i.amount));
+        return amount>0&&<div className="subline" key={group}><b>{label}</b><strong>{money(amount)}</strong></div>;
+      })}</div>}
+      <details open={editingDraft||received<=0}><summary>Позиции плана</summary>{draft.filter(i=>i.group!=='free'||!editingDraft).map(i=><div className="list-row" key={i.id}><span><b>{i.name}</b><small>{i.reason}</small></span>
         {editingDraft?<label className="amount-edit"><span>₸</span><input aria-label={i.name} type="number" min="0" step=".01" value={i.amount/100} onChange={e=>{
           const n=Math.round(Number(e.target.value)*100);
           const changed=draft.filter(j=>j.group!=='free').map(j=>j.id===i.id?{...j,amount:Math.max(0,n)}:j);
@@ -768,9 +809,10 @@ export function Workspace(){
           setDraft([...changed,{id:'free',group:'free',target:'',amount:rest,name:'Ликвидный остаток',reason:'Свободные средства'}]);
         }}/></label>:<strong>{money(i.amount)}</strong>}
       </div>)}
+      </details>
       {editingDraft&&<p>Ликвидный остаток · {money(draft.find(i=>i.group==='free')?.amount??0)}</p>}
-      {goal&&currentForecast&&draftForecast&&<div className="budget-tip"><b>Прогноз после подтверждения операций</b><p>Дефицит к сроку {money(draftForecast.deadline?.deficit??0)} · ОП {draftForecast.deadline?.op.toFixed(2)??'—'}</p><p>Дата покупки в текущем плане: {currentForecast.reached?dayLabel(currentForecast.reached):'за горизонтом прогноза'}. С выбранным планом: {draftForecast.reached?dayLabel(draftForecast.reached):'за горизонтом прогноза'}.</p></div>}
-      <div className="actions wrap"><Button variant="ghost" onClick={()=>setDraft(null)}>Отложить</Button><Button variant="outline" onClick={()=>openPlan()}>Пересчитать</Button><Button variant="outline" disabled={!draft.length} onClick={()=>setEditingDraft(!editingDraft)}>{editingDraft?'Готово':'Изменить суммы'}</Button><Button disabled={busy||!draft.some(i=>i.group!=='free'&&i.amount>0)} onClick={accept}>Принять распределение</Button></div>
+      {goal&&currentForecast&&draftForecast&&<details className="budget-tip"><summary>Как изменится прогноз</summary><p>Дефицит к сроку {money(draftForecast.deadline?.deficit??0)} · ОП {draftForecast.deadline?.op.toFixed(2)??'—'}</p><p>Дата покупки в текущем плане: {currentForecast.reached?dayLabel(currentForecast.reached):'за горизонтом прогноза'}. С выбранным планом: {draftForecast.reached?dayLabel(draftForecast.reached):'за горизонтом прогноза'}.</p></details>}
+      <div className="actions wrap"><Button variant="ghost" onClick={()=>setDraft(null)}>Отложить</Button><Button variant="outline" onClick={()=>openPlan()}>Пересчитать</Button><Button variant="outline" disabled={!draft.length} onClick={()=>setEditingDraft(!editingDraft)}>{editingDraft?'Готово':'Изменить распределение'}</Button><Button disabled={busy||!draft.some(i=>i.group!=='free'&&i.amount>0)} onClick={accept}>Принять план</Button></div>
     </section></div>}
     {authMode&&<div className="overlay" onClick={()=>A(null)}><section className="dialog small-dialog" role="dialog" aria-modal="true" aria-label="Вход" onClick={e=>e.stopPropagation()}>
       <div className="dialog-header"><h2>{authMode==='signUp'?'Создать аккаунт':authMode==='magic'?'Войти по ссылке':authMode==='reset'?'Восстановить доступ':authMode==='recover'?'Задать новый пароль':'Войти в MyCapital'}</h2><Button variant="ghost" onClick={()=>A(null)} aria-label="Закрыть">×</Button></div>
