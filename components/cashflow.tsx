@@ -10,11 +10,13 @@ import {Button} from './ui/button';
 
 export function MoneyToday({data,date,clock,onEvent,plan,buy,expense,report}:{data:Data;date:string;clock:string;onEvent:(event:Event)=>void;plan:()=>void;buy:()=>void;expense:()=>void;report:()=>void}){
   const budget=dailyBudget(data,date);
+  const closed=Boolean(data.settings.closings?.[first(date)]);
   const actions=reminders(data,date,clock).filter(n=>n.event).slice(0,3);
   return <div className="split">
-    <section className="card"><div className="section-head"><h2>Сколько могу потратить сегодня</h2><Wallet size={20}/></div>
-      <strong className="large">{money(budget.daily)}</strong>
-      <p>{money(budget.forLife)} на жизнь до {budget.income?shortDate(budget.end):'конца расчётного периода'} · {budget.horizon} дн.</p>
+    <section className="card"><div className="section-head"><h2>{closed?'Свободные деньги после закрытия месяца':'Сколько могу потратить сегодня'}</h2><Wallet size={20}/></div>
+      <strong className="large">{money(closed?budget.free:budget.daily)}</strong>
+      {closed&&<p>Месяц закрыт. Можно использовать или распределить остаток.</p>}
+      <p>{closed?'По прогнозу до следующего поступления · ':''}{money(budget.forLife)} на жизнь до {budget.income?shortDate(budget.end):'конца расчётного периода'} · {budget.horizon} дн.</p>
       {budget.shortage>0&&<p className="loss">До обязательных платежей не хватает {money(budget.shortage)}.</p>}
       {budget.undated>0&&<p>Учтён запас на платежи без даты · {money(budget.undated)}.</p>}
       {budget.delayed&&<p>Есть неподтверждённое поступление. Лимит рассчитан без него.</p>}
