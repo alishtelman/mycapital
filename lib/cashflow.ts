@@ -5,7 +5,8 @@ export function cashflow(d:Data,start:string,horizon=90){
   const events=calendar(d,month(start,-12),addDays(end,14));
   const byDate=new Map<string,Event[]>();
   for(const e of events){
-    if(e.status==='canceled'||e.status==='received'||e.status==='settled_before_tracking'||(e.date<start&&(e.kind==='income'||e.kind==='notice')))continue;
+    if(((e.kind==='expense'||e.kind==='income')&&remainingEvent(e,d.transactions)===0)||
+      e.status==='canceled'||e.status==='received'||e.status==='settled_before_tracking'||(e.date<start&&(e.kind==='income'||e.kind==='notice')))continue;
     const date=e.kind==='expense'&&!e.id.startsWith('purchase@')?payDate(d,e,start):e.date;
     const effective=date<start?start:date;
     if(effective>end)continue;
@@ -21,8 +22,17 @@ export function cashflow(d:Data,start:string,horizon=90){
     const sameDayIncome=sum(today.filter(e=>e.kind==='income'&&guaranteed(d,e)).map(e=>remainingEvent(e,d.transactions)));
     const expenses=sum(today.filter(e=>e.kind==='expense').map(e=>remainingEvent(e,d.transactions)));
     const savings=sum(today.filter(e=>e.kind==='saving').map(e=>e.amount));
-    const living=sum(d.categories.map(c=>Math.floor(Math.max(0,categoryBudget(d,c,date)-categorySpent(d,c.id,date))*
-      (1/(days(first(date),month(first(date),1))-Math.max(0,days(first(date),start.slice(0,7)===date.slice(0,7)?start:first(date))))))));
+    const period=first(date);
+    const living=d.settings.closings?.[period]?0:sum(d.categories.map(c=>{
+      const budget=categoryBudget(d,c,date);
+      const spent=categorySpent(d,c.id,date);
+      const dayIndex=days(period,date);
+      const monthLength=days(period,month(period,1));
+      const daysAfterStart=days(start>period?start:period,date);
+      const priorProjection=Math.floor(budget*dayIndex/monthLength)-Math.floor(budget*(dayIndex-daysAfterStart)/monthLength);
+      const daily=Math.floor(budget*(dayIndex+1)/monthLength)-Math.floor(budget*dayIndex/monthLength);
+      return Math.max(0,Math.min(daily,budget-spent-priorProjection));
+    }));
     const released=sum(today.map(e=>e.kind==='expense'?Math.min(reserved(d,e.id),remainingEvent(e,d.transactions)):e.kind==='saving'?e.amount:0));
     const lifeRelease=Math.min(living,reservedLife);
     reservedLife-=lifeRelease;

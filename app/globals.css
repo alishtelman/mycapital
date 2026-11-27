@@ -164,3 +164,10 @@ details[open]>summary{margin-bottom:8px}
   .bottom-nav button{min-height:44px}
   .action-row .button{flex-shrink:0}
 }
+
+.capital-summary .capital-breakdown{grid-template-columns:repeat(2,minmax(0,1fr))}
+.dashboard-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media(max-width:570px){
+  .dashboard-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-actions .button{min-height:44px}
+}

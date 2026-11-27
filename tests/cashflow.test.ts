@@ -187,3 +187,24 @@ test('оплата до начала учёта не создаёт расход
   assert.ok(!reminders(d,start).some(n=>n.event?.id===event.id));
   assert.ok(calendar(d,start,'2026-12-16').some(e=>e.rule===event.rule&&e.date==='2026-12-15'&&e.status==='planned'));
 });
+
+test('закрытый месяц сохраняет остаток и вычитает только незакрытые платежи',()=>{
+  const d=setup(500_000);
+  d.settings.closings={'2026-11-01':{date:'2026-11-27'}};
+  d.categories=[{id:'life',name:'На жизнь',budget:3_000_000,minimum:0,maximum:3_000_000,rank:1,flexible:true}];
+  d.rules.push(makeRule({date:'2026-11-30',amount:100_000,payment:{early:false}}));
+  const event=calendar(d,'2026-11-27','2026-11-30').find(e=>e.kind==='expense')!;
+  const rows=cashflow(d,'2026-11-27',4);
+  assert.equal(rows[0].available,500_000);
+  assert.equal(rows[3].available,400_000);
+  d.transactions=[payment(event,event.amount)];
+  const paid=cashflow(d,'2026-11-27',4);
+  assert.equal(paid[3].available,400_000);
+  assert.ok(!paid.some(row=>row.events.some(e=>e.id===event.id)));
+});
+
+test('открытый месяц не расходует месячный лимит целиком за оставшиеся дни',()=>{
+  const d=setup(500_000);
+  d.categories=[{id:'life',name:'На жизнь',budget:3_000_000,minimum:0,maximum:3_000_000,rank:1,flexible:true}];
+  assert.equal(cashflow(d,'2026-11-27',4).at(-1)?.available,100_000);
+});

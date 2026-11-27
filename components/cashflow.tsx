@@ -1,6 +1,6 @@
 'use client';
 import {useState} from 'react';
-import {ArrowUpRight,Bell,CalendarClock,Wallet} from 'lucide-react';
+import {Bell,CalendarClock,Wallet} from 'lucide-react';
 import {monthlyReport,paymentState,purchaseOptions,reminders} from '../lib/cashflow';
 import {recommendedPurchase} from '../lib/workspace-view';
 import {dailyBudget,first,money,month,type Data,type Event} from '../lib/finance';
@@ -8,7 +8,7 @@ import {dayLabel,shortDate} from './dashboard';
 import {Blank} from './forms';
 import {Button} from './ui/button';
 
-export function MoneyToday({data,date,clock,onEvent,plan,buy,expense,report}:{data:Data;date:string;clock:string;onEvent:(event:Event)=>void;plan:()=>void;buy:()=>void;expense:()=>void;report:()=>void}){
+export function MoneyToday({data,date,clock,onEvent,plan,report}:{data:Data;date:string;clock:string;onEvent:(event:Event)=>void;plan:()=>void;report:()=>void}){
   const budget=dailyBudget(data,date);
   const closed=Boolean(data.settings.closings?.[first(date)]);
   const actions=reminders(data,date,clock).filter(n=>n.event&&(!closed||n.event.date<month(first(date),1))).slice(0,3);
@@ -21,7 +21,6 @@ export function MoneyToday({data,date,clock,onEvent,plan,buy,expense,report}:{da
         {budget.undated>0&&<p>Учтён запас на платежи без даты · {money(budget.undated)}.</p>}
         {budget.delayed&&<p>Есть неподтверждённое поступление. Лимит рассчитан без него.</p>}
       </>}
-      <div className="quick"><Button onClick={expense}><ArrowUpRight size={16}/> Добавить расход</Button>{!closed&&<Button variant="outline" onClick={buy}>Хочу купить</Button>}</div>
     </section>
     <section className="card"><div className="section-head"><h2>Что сделать сегодня</h2><CalendarClock size={20}/></div>
       {actions.length===0&&<p>Срочных действий нет.</p>}

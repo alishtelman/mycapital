@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
+import {allocation,balance,bonus,calendar,cash,categoryBudget,categorySpent,debtComparison,depositYield,effectiveDebt,empty,forecast,goalHoldings,remainingEvent,reserved,schedule,score,sum,today,validateEntry,type Data,type Entry} from '../lib/finance.ts';
 
 const sample=():Data=>JSON.parse(readFileSync(new URL('../lib/demo.json',import.meta.url),'utf8'));
 const date='2026-11-27';
@@ -155,4 +155,19 @@ test('прогноз для середины месяца не включает 
   assert.equal(result.deadline?.date,goal.date);
   assert.equal(result.deadline?.income,61000000);
   assert.equal(result.latest?.income,29500000);
+});
+
+test('прогресс цели учитывает выделенные активы, а взнос исключает рынок, подушку и недоступный вклад',()=>{
+  const d=sample();
+  const goal=d.goals[0];
+  const account=d.accounts[0];
+  d.accounts=[
+    {...account,id:'cash',kind:'cash',opening:80_000},
+    {...account,id:'otbasy',kind:'otbasy',opening:100_000},
+    {...account,id:'term',kind:'bcc',liquidity:'term',maturity:'2030-01-01',opening:50_000},
+    {...account,id:'cushion',kind:'reserve',opening:20_000},
+    {...account,id:'gold',kind:'market',opening:30_000,goalIncluded:true},
+    {...account,id:'shares',kind:'market',opening:10_000,goalIncluded:undefined},
+  ];
+  assert.deepEqual(goalHoldings(d,goal),{otbasy:100_000,bcc:50_000,market:30_000,cushion:20_000,total:200_000,downPaymentFunds:100_000});
 });

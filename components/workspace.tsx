@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
-import {addDays,allocation,availableForGoal,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
+import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,goalHoldings,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
 import {closePaidExpense,detachExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
 import {calendarGroups} from '../lib/workspace-view';
@@ -20,7 +20,7 @@ const FlowCalendar=dynamic(()=>import('./flow-calendar'));
 const url=process.env.NEXT_PUBLIC_SUPABASE_URL, key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const db=url&&key?createClient(url,key):null;
 const nav=[
-  ['dashboard','Главная',House],['budget','Бюджет',LayoutGrid],['calendar','Календарь',CalendarDays],
+  ['dashboard','Главная',House],['budget','Бюджет',LayoutGrid],['calendar','Платежи',CalendarDays],
   ['accounts','Накопления',Wallet],['debts','Кредиты',Coins],['goals','Цели',Target],
   ['analytics','Аналитика',ChartNoAxesCombined],['history','История операций',History],
   ['purchases','Планы и покупки',ShoppingBag],['settings','Настройки',Settings]
@@ -563,17 +563,20 @@ export function Workspace(){
       <main>
         {section==='more'&&<><div className="page-heading"><h1>Ещё</h1></div><section className="card">{nav.slice(4).filter(([id])=>id!=='goals'&&id!=='purchases').map(([id,label,Icon])=><button className="list-row" key={id} onClick={()=>go(id)}><span className="inline"><Icon size={18}/><b>{label}</b></span><ChevronRight size={16}/></button>)}</section></>}
         {section==='dashboard'&&session&&!workspace&&<section className="card"><p>Загружаем данные аккаунта.</p></section>}
-        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} income={()=>quickIncome()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} buy={()=>assessPurchase()} expense={quickExpense} report={()=>setShowReport(true)}/>}/>}
+        {section==='dashboard'&&(!session||workspace)&&<Dashboard data={data} date={day} go={go} income={quickIncome} expense={quickExpense} transfer={()=>operation('transfer')} purchase={()=>assessPurchase()} onEvent={eventEditor} prediction={currentForecast} moneyToday={<MoneyToday data={data} date={day} clock={clock} onEvent={eventEditor} plan={()=>openPlan()} report={()=>setShowReport(true)}/>}/>}
         {section==='checklist'&&<>{heading('План принят','Деньги отложены в MyCapital. Отмечайте фактически выполненные действия.',<Button variant="outline" onClick={()=>go('budget')}>Вернуться в бюджет</Button>)}{reservesPanel}</>}
         {section==='budget'&&<>
           {heading('Бюджет','Расходы и платежи на месяц.',<Button onClick={quickExpense}><Plus size={18}/> Добавить расход</Button>)}
           <div className="quick"><Button variant="outline" onClick={()=>go('purchases')}>Планы и покупки</Button><Button variant="outline" onClick={()=>openPlan()}>Распределить деньги</Button></div>
           <section className="card"><div className="section-head"><div><h2>Обязательные платежи</h2><p>Даты, суммы и напоминания</p></div><Button onClick={()=>editPayment()}><Plus size={18}/> Новый платёж</Button></div>
             <p>Всего {money(sum(monthPayments.map(p=>p.actual+p.remaining+(p.event.status==='settled_before_tracking'?p.event.amount:0))))} · оплачено {money(sum(monthPayments.map(p=>p.actual+(p.event.status==='settled_before_tracking'?p.event.amount:0))))} · осталось {money(sum(monthPayments.map(p=>p.remaining)))} · отложить {money(sum(monthPayments.map(p=>p.missing)))}</p>
-            {monthPayments.map(p=><div className="action-row" key={p.event.id}>
-              {row(p.event.name,shortDate(dueDate(p.event))+' · '+p.label,money(p.event.amount),()=>eventEditor(p.event))}
-              {p.remaining>0&&<Button variant="outline" onClick={()=>operation('expense',p.event)}>Оплатил</Button>}
+            {monthPayments.filter(p=>p.remaining>0).map(p=><div className="action-row" key={p.event.id}>
+              {row(p.event.name,shortDate(dueDate(p.event))+' · '+p.label,money(p.remaining),()=>eventEditor(p.event))}
+              <Button variant="outline" onClick={()=>operation('expense',p.event)}>Оплатил</Button>
             </div>)}
+            {monthPayments.some(p=>p.remaining===0)&&<details><summary>Оплачено</summary>{monthPayments.filter(p=>p.remaining===0).map(p=>
+              row(p.event.name,shortDate(dueDate(p.event))+' · план '+money(p.event.amount)+(p.actual?' · факт '+money(p.actual):' · '+p.label),
+                money(p.actual||p.event.amount),()=>eventEditor(p.event)))}</details>}
             {!monthPayments.length&&<Blank>В этом месяце нет платежей с датой.</Blank>}
             <details><summary>Правила и платежи без даты</summary>{data.rules.filter(r=>r.kind==='expense').map(r=>row(r.name,ruleDetail(r),money(ruleAmount(r)),()=>editPayment(r)))}</details>
             <Button variant="ghost" onClick={()=>setShowReport(true)}>Отчёт за месяц</Button>
@@ -589,7 +592,7 @@ export function Workspace(){
                 return <div className="budget-item" key={c.id}>
                   {row(c.name,'Выделено',money(budget),()=>edit('categories',c))}
                   <div className="progress"><div style={{width:Math.min(100,budget?100*spent/budget:0)+'%'}} className={left<0?'over':''}/></div>
-                  <div className="subline"><span>Потрачено {money(spent)}</span><span className={left<0?'loss':''}>{left>=0?'Осталось ':'Перерасход '}{money(Math.abs(left))}</span></div>
+                  <div className="subline"><span>Потрачено {money(spent)} · в резерве {money(reserved(data,c.id))}</span><span className={left<0?'loss':''}>{left>=0?'Остаток лимита ':'Перерасход '}{money(Math.abs(left))}</span></div>
                   {left<0&&cuts.length>0&&<p className="budget-tip">Можно перераспределить {cuts.map(x=>x.category.name+' · '+money(x.amount)).join(', ')}. <Button variant="outline" disabled={busy} onClick={()=>{
                     if(!window.confirm('Подтвердить перераспределение бюджета?'))return;
                     const moved=sum(cuts.map(x=>x.amount));
@@ -629,7 +632,7 @@ export function Workspace(){
         </>}
         {section==='accounts'&&<>
           {heading('Счета и накопления','Денежные счета, депозиты и рыночные активы.',add('accounts','Добавить счёт'))}
-          <section className="card"><div className="section-head"><div><h2>Моя цель</h2><p>{goal?.name??'Добавьте финансовую цель'}</p>{goal&&<p>Осталось {money(Math.max(0,downPayment(goal)+goal.reserve-sum(data.accounts.filter(a=>availableForGoal(a,goal.date)).map(a=>balance(a,data.transactions)))))} · {currentForecast?.reached?dayLabel(currentForecast.reached):'Дата пока не определена'}</p>}</div><Button variant="outline" onClick={()=>go('goals')}>Подробнее</Button></div></section>
+          <section className="card"><div className="section-head"><div><h2>Моя цель</h2><p>{goal?.name??'Добавьте финансовую цель'}</p>{goal&&<p>Осталось {money(Math.max(0,downPayment(goal)+goal.reserve-goalHoldings(data,goal).total))} · {currentForecast?.reached?dayLabel(currentForecast.reached):'Дата пока не определена'}</p>}</div><Button variant="outline" onClick={()=>go('goals')}>Подробнее</Button></div></section>
           <div className="quick"><Button variant="outline" onClick={()=>operation('transfer')}><ArrowLeftRight size={17}/> Перевод</Button><Button variant="outline" onClick={()=>operation('sale')}>Продажа актива</Button>{add('bonuses','Госпремия')}</div>
           {data.accounts.some(a=>a.kind==='otbasy'||a.kind==='bcc')&&<section className="card"><h2>Пополнения в этом месяце</h2>
             {data.accounts.filter(a=>a.kind==='otbasy'||a.kind==='bcc').map(a=>{
@@ -722,7 +725,7 @@ export function Workspace(){
             <option value="">Все счета</option>{data.accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
           {!data.transactions.some(t=>!accountHistory||t.from===accountHistory||t.to===accountHistory)&&<Blank>Подтверждённых операций пока нет.</Blank>}{data.transactions.filter(t=>!accountHistory||t.from===accountHistory||t.to===accountHistory).sort((a,b)=>b.date.localeCompare(a.date)).map(t=><div key={t.id} className="transaction-row">
             <div className="icon-soft">{t.kind==='income'?<ArrowDownLeft size={18}/>:t.kind==='expense'?<ArrowUpRight size={18}/>:<ArrowLeftRight size={18}/>}</div>
-            {row(t.name,shortDate(t.date)+' · '+kindNames[t.kind],money(t.amount),()=>{
+            {row(t.name,shortDate(t.date)+' · '+kindNames[t.kind],(t.kind==='expense'?'−':t.kind==='income'?'+':'')+money(t.amount),()=>{
               if(t.kind!=='valuation'){operation(t.kind,undefined,undefined,t);return;}
               M({title:'Исправить переоценку',fields:[f('name','Название'),f('date','Дата','date'),f('amount','Сумма изменения, ₸','money')],initial:scalarFields(t),submit:v=>commitEntry({...t,...v})});
             })}
@@ -768,7 +771,8 @@ export function Workspace(){
             <Button variant="outline" onClick={()=>download('mycapital-backup.json',JSON.stringify(data,null,2),'application/json')}>Экспорт JSON</Button>
             <Button variant="outline" onClick={csv}>Экспорт CSV</Button>
             {workspace&&<label className="button outline file-button">Импорт JSON<input type="file" accept=".json,application/json" onChange={e=>{void importFile(e.target.files?.[0]);e.target.value='';}}/></label>}
-          </div>{workspace&&<><p>Даты обязательных платежей, дежурств и депозитов задаются в календаре и накоплениях. Проверьте остаток рассрочек в кредитах.</p><Button variant="outline" className="loss" onClick={()=>void deleteUser()}>Удалить аккаунт</Button></>}</section>
+          </div></section>
+          {workspace&&<details className="card"><summary>Удаление аккаунта</summary><p>При удалении аккаунта удаляется принадлежащий ему семейный бюджет.</p><Button variant="outline" className="loss" onClick={()=>void deleteUser()}>Удалить аккаунт</Button></details>}
         </>}
       </main>
     </div>

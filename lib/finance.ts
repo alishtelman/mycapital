@@ -37,6 +37,13 @@ export const categoryBudget = (d:Data,c:Category,date:string) => d.settings.mont
 export const availableForGoal = (a:Account,date:string) => a.goalIncluded!==false && (a.kind==='otbasy'||a.kind==='reserve'||(a.kind==='bcc'&&(!a.maturity||a.maturity<=date)&&(a.liquidity!=='term'||!!a.maturity)));
 export const balance = (a:Account,entries:Entry[]) => a.opening+sum(entries.map(e=>
   (e.to===a.id?e.amount:0)-(e.from===a.id?(e.kind==='sale'?e.sold:e.amount):0)));
+export function goalHoldings(d:Data,goal:Goal){
+  const eligible=d.accounts.filter(a=>a.kind==='market'?a.goalIncluded===true:a.kind!=='cash'&&a.goalIncluded!==false);
+  const value=(kind:Account['kind'])=>sum(eligible.filter(a=>a.kind===kind).map(a=>balance(a,d.transactions)));
+  const otbasy=value('otbasy'), bcc=value('bcc'), market=value('market'), cushion=value('reserve');
+  const accessibleBcc=sum(eligible.filter(a=>a.kind==='bcc'&&availableForGoal(a,goal.date)).map(a=>balance(a,d.transactions)));
+  return {otbasy,bcc,market,cushion,total:otbasy+bcc+market+cushion,downPaymentFunds:otbasy+accessibleBcc};
+}
 export const uses = (entry:Entry) => entry.reserveUses??(entry.reservation?[{id:entry.reservation,amount:entry.amount}]:[]);
 export const usedReserve = (entries:Entry[],id:string) => sum(entries.flatMap(uses).filter(x=>x.id===id).map(x=>x.amount));
 export const reserved = (d:Data,target?:string) => sum(d.plans.filter(p=>p.status==='accepted').flatMap(p=>p.items.filter(i=>!target||i.target===target)
