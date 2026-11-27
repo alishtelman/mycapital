@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {allocation,calendar,cash,dailyBudget,days,effectiveDebt,empty,payDate,reserved,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Plan,type Rule} from '../lib/finance.ts';
-import {cashflow,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
+import {cashflow,closePaidExpense,monthlyReport,paymentState,purchaseOptions,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow.ts';
 import {dataSchema} from '../lib/schema.ts';
 
 const start='2026-12-01';
@@ -140,4 +140,24 @@ test('крайний срок и рекомендуемая дата могут 
   const bill=calendar(d,start,'2026-12-09').find(e=>e.rule==='bill')!;
   assert.equal(days(bill.date,bill.deadline!),5);
   assert.equal(payDate(d,bill,start),'2026-12-04');
+});
+
+
+test('фактический счёт ниже плана: закрытие снимает просрочку и освобождает остаток резерва',()=>{
+  const d=setup(6_000_000);
+  d.rules.push(makeRule({name:'Коммунальные услуги',amount:3_000_000,date:'2026-12-05'}));
+  const event=calendar(d,start,'2026-12-06').find(e=>e.kind==='expense')!;
+  withReserves(d,event,[3_000_000]);
+  d.transactions=[withPaymentReserves(d,payment(event,2_371_100),event.id)];
+  const date='2026-12-06';
+  assert.equal(paymentState(d,event,date).label,'Частично оплачен · остаток просрочен');
+  assert.equal(reserved(d),628_900);
+  const next=closePaidExpense(d,event,date);
+  const closed=calendar(next,start,date).find(e=>e.id===event.id)!;
+  assert.equal(paymentState(next,closed,date).label,'Оплачен');
+  assert.equal(paymentState(next,closed,date).actual,2_371_100);
+  assert.equal(reserved(next),0);
+  assert.deepEqual(next.transactions,d.transactions);
+  assert.equal(cash(next),cash(d));
+  assert.ok(!reminders(next,date).some(n=>n.event?.id===event.id));
 });

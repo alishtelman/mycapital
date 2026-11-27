@@ -39,7 +39,7 @@ export function paymentState(d:Data,e:Event,date:string){
   const actual=sum(d.transactions.filter(t=>t.event===e.id).map(t=>t.amount));
   const remaining=remainingEvent(e,d.transactions);
   const held=Math.min(remaining,reserved(d,e.id));
-  const label=e.status==='canceled'?'Отменён':!remaining?'Оплачен':dueDate(e)<date?'Просрочен':actual?'Частично оплачен':
+  const label=e.status==='canceled'?'Отменён':!remaining?'Оплачен':actual?(dueDate(e)<date?'Частично оплачен · остаток просрочен':'Частично оплачен'):dueDate(e)<date?'Просрочен':
     held>=remaining?'Полностью зарезервирован':held?'Частично зарезервирован':e.status==='moved'?'Перенесён':e.date<=date?'Не обеспечен деньгами':'Запланирован';
   return {actual,remaining,held,missing:remaining-held,label,recommended:payDate(d,e,date)};
 }
@@ -64,6 +64,13 @@ export function trimPaymentReserves(d:Data,event:Event){
     needed-=kept;
     return {...item,amount:used+kept};
   })});
+}
+
+export function closePaidExpense(d:Data,event:Event,date:string):Data{
+  const {actual,remaining}=paymentState(d,event,date);
+  if(event.kind!=='expense'||!actual||!remaining)return d;
+  const completed:Event={...event,status:'received'};
+  return {...d,events:[...d.events.filter(e=>e.id!==event.id),completed],plans:trimPaymentReserves(d,completed)};
 }
 
 export function reminders(d:Data,date:string,clock='23:59'){

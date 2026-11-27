@@ -4,7 +4,7 @@ import {createClient,type Session} from '@supabase/supabase-js';
 import {ArrowDownLeft,ArrowLeftRight,ArrowUpRight,Bell,CalendarDays,ChartNoAxesCombined,ChevronDown,ChevronLeft,ChevronRight,CircleHelp,Coins,History,House,LayoutGrid,LogOut,Menu,Moon,Plus,Settings,ShieldCheck,ShoppingBag,Sparkles,Sun,Target,Wallet} from 'lucide-react';
 import demo from '../lib/demo.json';
 import {addDays,allocation,balance,bonus,budgetCuts,calendar,cash,dailyBudget,categoryBudget,categorySpent,days,debtComparison,depositYield,downPayment,dueDate,effectiveDebt,empty,first,forecast,marketBasis,money,month,optimizeSavings,remainingEvent,reserved,ruleAmount,usedReserve,schedule,score,sum,today,validateEntry,type Account,type Data,type Entry,type Event,type Item,type Plan,type Rule} from '../lib/finance';
-import {monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
+import {closePaidExpense,monthlyReport,nextDebt,paymentState,reminders,trimPaymentReserves,withPaymentReserves} from '../lib/cashflow';
 import {FlowCalendar,MoneyToday,MonthReport,Notifications,PurchaseCheck} from './cashflow';
 import {dataSchema} from '../lib/schema';
 import {Dashboard,ForecastChart,dayLabel,kinds,shortDate} from './dashboard';
@@ -372,12 +372,21 @@ export function Workspace(){
     setInbox(false);
     const form=editor('events',data,scalarFields(event));
     const status=event.kind==='expense'?paymentState(data,event,day):null;
-    if(status)form.fields.push(f('deadline','Крайний срок','date',true));
+    if(status){
+      form.fields=form.fields.map(field=>field.key==='amount'?{...field,label:'Плановая сумма, ₸'}:field);
+      form.fields.push(f('deadline','Крайний срок','date',true));
+    }
     const active=remainingEvent(event,data.transactions)>0;
     M({title:event.name,...form,actions:<>
       {status&&<p>{status.label} · рекомендованная дата {shortDate(status.recommended)} · оплачено {money(status.actual)} · в резерве {money(status.held)} · осталось оплатить {money(status.remaining)} · осталось зарезервировать {money(status.missing)}.</p>}
-      {status&&event.payment?.discount&&<p>Возможная досрочная скидка {event.payment.discount}%. Сверьте итоговую сумму перед оплатой.</p>}
+      {status&&!!event.payment?.discount&&<p>Возможная досрочная скидка {event.payment.discount}%. Сверьте итоговую сумму перед оплатой.</p>}
       {active&&event.kind==='expense'&&<Button variant="outline" onClick={()=>operation('expense',event)}>Оплатил</Button>}
+      {status&&status.actual>0&&status.remaining>0&&<>
+        <p>Если {money(status.actual)} — полная сумма по счёту, закрой платёж без доплаты. Свободная часть резерва вернётся в бюджет.</p>
+        <Button variant="outline" disabled={busy} onClick={()=>{
+          void persist(closePaidExpense(data,event,day),'Платёж закрыт').then(ok=>{if(ok)M(null);});
+        }}>Закрыть без доплаты</Button>
+      </>}
       {status&&status.missing>0&&<Button variant="outline" onClick={()=>reservePayment(event)}>Зарезервировать</Button>}
       {active&&event.kind==='income'&&<Button variant="outline" onClick={()=>operation('income',event)}>Получил деньги</Button>}
     </>,submit:v=>{

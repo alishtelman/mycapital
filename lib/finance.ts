@@ -66,7 +66,7 @@ export function effectiveDebt(debt:Debt,d:Data):Debt{
     const paid=sum(tx.map(t=>t.amount));
     const interest=Math.round(principal*debt.rate/1200);
     principal=Math.max(0,principal-Math.max(0,paid-interest));
-    if(event&&(paid>=event.amount||tx.some(t=>t.finalPayment))&&date<=event.date)date=month(debt.date,Math.max(1,(Number(event.date.slice(0,4))-Number(debt.date.slice(0,4)))*12+Number(event.date.slice(5,7))-Number(debt.date.slice(5,7))+1));
+    if(event&&(event.status==='received'||paid>=event.amount||tx.some(t=>t.finalPayment))&&date<=event.date)date=month(debt.date,Math.max(1,(Number(event.date.slice(0,4))-Number(debt.date.slice(0,4)))*12+Number(event.date.slice(5,7))-Number(debt.date.slice(5,7))+1));
   }
   const early=linked.filter(t=>!t.event||t.category===debt.id);
   const reduced=Math.max(0,principal-sum(early.map(t=>t.amount)));
